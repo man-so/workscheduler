@@ -1,6 +1,8 @@
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from datetime import time
+from calendar import monthrange
+from datetime import date, time
+import shutil
 from typing import TypeVar
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -11,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import Base, engine, get_db
+from app.agent_runner import AGENT_NAMES
+from app.generation import cancel_generation, submit_generation
 from app import models, schemas
 from app.setup_logic import analyze_setup, dumps, get_team_rows, loads, parse_setup_message, proposed_changes_from_patch
 
@@ -65,6 +69,14 @@ def list_by_team(db: Session, model: type[ModelT], team_id: int) -> Sequence[Mod
 @app.get("/api/health", response_model=schemas.HealthResponse)
 def health() -> schemas.HealthResponse:
     return schemas.HealthResponse(status="ok", service="workscheduler-backend")
+
+
+@app.get("/api/agents")
+def list_agents() -> list[dict[str, object]]:
+    return [
+        {"id": agent_id, "command": command, "installed": shutil.which(command) is not None}
+        for agent_id, command in AGENT_NAMES.items()
+    ]
 
 
 @app.post("/api/teams", response_model=schemas.TeamRead, status_code=status.HTTP_201_CREATED)
@@ -287,6 +299,115 @@ def create_assignment(team_id: int, payload: schemas.AssignmentCreate, db: Sessi
 @app.get("/api/teams/{team_id}/assignments", response_model=list[schemas.AssignmentRead])
 def list_assignments(team_id: int, db: Session = Depends(get_db)) -> Sequence[models.Assignment]:
     return list_by_team(db, models.Assignment, team_id)
+
+
+def read_generation_run(run: models.AgentRun) -> schemas.GenerationRunRead:
+    return schemas.GenerationRunRead(
+        id=run.id,
+        team_id=run.team_id,
+        year=run.year,
+        month=run.month,
+        agent_id=run.agent_id,
+        status=run.status,
+        timeout_seconds=run.timeout_seconds,
+        constraints=loads(run.constraints_json, None),
+        result=loads(run.result_json, None),
+        log_text=run.log_text,
+        error_message=run.error_message,
+        cancel_requested=run.cancel_requested,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+    )
+
+
+@app.post("/api/teams/{team_id}/schedules/generate", response_model=schemas.GenerationRunRead, status_code=status.HTTP_202_ACCEPTED)
+def start_schedule_generation(
+    team_id: int,
+    payload: schemas.GenerationCreate,
+    db: Session = Depends(get_db),
+) -> schemas.GenerationRunRead:
+    ensure_team(db, team_id)
+    run = models.AgentRun(
+        team_id=team_id,
+        year=payload.year,
+        month=payload.month,
+        agent_id=payload.agent_id,
+        timeout_seconds=payload.timeout_seconds,
+        status=models.AgentRunStatus.QUEUED,
+    )
+    db.add(run)
+    commit_or_409(db)
+    db.refresh(run)
+    submit_generation(run.id, team_id, payload.year, payload.month, payload.agent_id, payload.timeout_seconds)
+    return read_generation_run(run)
+
+
+@app.get("/api/teams/{team_id}/generation-runs/{run_id}", response_model=schemas.GenerationRunRead)
+def get_generation_run(team_id: int, run_id: int, db: Session = Depends(get_db)) -> schemas.GenerationRunRead:
+    ensure_team(db, team_id)
+    run = db.get(models.AgentRun, run_id)
+    if run is None or run.team_id != team_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation run not found")
+    return read_generation_run(run)
+
+
+@app.post("/api/teams/{team_id}/generation-runs/{run_id}/cancel", response_model=schemas.GenerationRunRead)
+def stop_generation(team_id: int, run_id: int, db: Session = Depends(get_db)) -> schemas.GenerationRunRead:
+    ensure_team(db, team_id)
+    run = db.get(models.AgentRun, run_id)
+    if run is None or run.team_id != team_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="generation run not found")
+    run.cancel_requested = True
+    if run.status == models.AgentRunStatus.QUEUED:
+        run.status = models.AgentRunStatus.CANCELED
+    commit_or_409(db)
+    cancel_generation(run_id)
+    db.refresh(run)
+    return read_generation_run(run)
+
+
+@app.get("/api/teams/{team_id}/schedules/{year}/{month}", response_model=schemas.MonthlyScheduleRead)
+def get_monthly_schedule(team_id: int, year: int, month: int, db: Session = Depends(get_db)) -> schemas.MonthlyScheduleRead:
+    team = ensure_team(db, team_id)
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must be between 1 and 12")
+    schedule = db.scalar(select(models.Schedule).where(models.Schedule.team_id == team_id, models.Schedule.year == year, models.Schedule.month == month))
+    if schedule is None or schedule.active_version_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule not found")
+    version = db.get(models.ScheduleVersion, schedule.active_version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule version not found")
+    employees = db.scalars(select(models.Employee).where(models.Employee.team_id == team_id, models.Employee.is_active.is_(True))).all()
+    employee_by_id = {employee.id: employee for employee in employees}
+    shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == team_id)).all()
+    shift_by_id = {shift.id: shift for shift in shift_types}
+    assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
+    assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
+    days: list[schemas.CalendarDay] = []
+    for day in range(1, monthrange(year, month)[1] + 1):
+        local_date = date(year, month, day)
+        day_items: list[schemas.CalendarAssignment] = []
+        for employee in employees:
+            item = assignment_by_key.get((employee.id, local_date))
+            shift = shift_by_id.get(item.shift_type_id) if item and item.shift_type_id else None
+            day_items.append(schemas.CalendarAssignment(
+                employee_id=employee.id,
+                employee_name=employee.display_name,
+                status=item.status if item else "OFF",
+                shift_type_id=shift.id if shift else None,
+                shift_type_name=shift.name if shift else None,
+                category=shift.category if shift else "OFF",
+                start_time=shift.start_time if shift else None,
+                end_time=shift.end_time if shift else None,
+                ends_next_day=shift.ends_next_day if shift else False,
+                color=shift.color if shift else None,
+            ))
+        groups: dict[str, list[schemas.CalendarAssignment]] = {}
+        for item in day_items:
+            groups.setdefault(item.category or item.status, []).append(item)
+        days.append(schemas.CalendarDay(local_date=local_date, groups=groups, assignments=day_items))
+    return schemas.MonthlyScheduleRead(schedule_id=schedule.id, version_id=version.id, version_no=version.version_no, year=year, month=month, status=version.status, solver_status=version.solver_status, days=days)
 
 
 @app.get("/api/teams/{team_id}/setup-summary", response_model=schemas.SetupSummary)

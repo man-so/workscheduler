@@ -15,6 +15,7 @@ out/
 dist/
 build/
 *.spec
+!backend/workscheduler-api.spec
 coverage/
 *.tsbuildinfo
 npm-debug.log*

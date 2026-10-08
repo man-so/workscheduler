@@ -58,6 +58,16 @@ class SetupSessionStatus(StrEnum):
     CANCELED = "CANCELED"
 
 
+class AgentRunStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SOLVING = "SOLVING"
+    SUCCEEDED = "SUCCEEDED"
+    INFEASIBLE = "INFEASIBLE"
+    FAILED = "FAILED"
+    CANCELED = "CANCELED"
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -246,3 +256,24 @@ class SetupSession(Base):
     warnings_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default=AgentRunStatus.QUEUED, nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    request_json: Mapped[str | None] = mapped_column(Text)
+    constraints_json: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text)
+    log_text: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

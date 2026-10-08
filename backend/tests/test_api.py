@@ -1,4 +1,5 @@
 from collections.abc import Generator
+import time
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -193,3 +194,43 @@ def test_conflicting_coverage_validation_and_bad_llm_json() -> None:
         assert "missing fields" in str(exc)
     else:
         raise AssertionError("invalid LLM JSON should fail schema validation")
+
+
+def test_generation_pipeline_persists_monthly_calendar(monkeypatch) -> None:
+    from app import generation
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+
+    def fake_agent(agent_id, constraint_input, timeout_seconds, cancel_event=None):
+        return AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id])
+
+    monkeypatch.setattr(generation, "run_agent", fake_agent)
+    team = client.post("/api/teams", json={"name": "생성 파이프라인"}).json()
+    employee = client.post(
+        f"/api/teams/{team['id']}/employees",
+        json={"employee_no": "EMP-GEN", "display_name": "가상 직원"},
+    ).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "GEN-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00"},
+    ).json()
+    assert client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "평일 주간", "shift_type_id": shift["id"], "days_of_week_json": "[\"MON\",\"TUE\",\"WED\",\"THU\",\"FRI\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    ).status_code == 201
+
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 11, "agent_id": "codex", "timeout_seconds": 5})
+    assert started.status_code == 202
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+    calendar = client.get(f"/api/teams/{team['id']}/schedules/2026/11")
+    assert calendar.status_code == 200
+    days = calendar.json()["days"]
+    assert len(days) == 30
+    assert all(len(day["assignments"]) == 1 for day in days)

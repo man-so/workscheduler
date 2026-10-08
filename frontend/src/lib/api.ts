@@ -99,6 +99,54 @@ export type SetupSession = {
   needs_approval?: boolean;
 };
 
+export type GenerationRun = {
+  id: number;
+  team_id: number;
+  year: number;
+  month: number;
+  agent_id: string;
+  status: string;
+  timeout_seconds: number;
+  constraints: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  log_text: string | null;
+  error_message: string | null;
+  cancel_requested: boolean;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string | null;
+};
+
+export type CalendarAssignment = {
+  employee_id: number;
+  employee_name: string;
+  status: string;
+  shift_type_id: number | null;
+  shift_type_name: string | null;
+  category: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  ends_next_day: boolean;
+  color: string | null;
+};
+
+export type CalendarDay = {
+  local_date: string;
+  groups: Record<string, CalendarAssignment[]>;
+  assignments: CalendarAssignment[];
+};
+
+export type MonthlySchedule = {
+  schedule_id: number;
+  version_id: number;
+  version_no: number;
+  year: number;
+  month: number;
+  status: string;
+  solver_status: string | null;
+  days: CalendarDay[];
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -178,4 +226,20 @@ export function sendSetupMessage(teamId: number, sessionId: number, message: str
 
 export function approveSetupPatch(teamId: number, sessionId: number): Promise<{ applied: ProposedChange[]; summary: SetupSummary }> {
   return post<{ applied: ProposedChange[]; summary: SetupSummary }>(`/api/teams/${teamId}/setup-sessions/${sessionId}/approve`, {});
+}
+
+export function generateSchedule(teamId: number, payload: { year: number; month: number; agent_id: "codex" | "claude"; timeout_seconds: number }): Promise<GenerationRun> {
+  return post<GenerationRun>(`/api/teams/${teamId}/schedules/generate`, payload);
+}
+
+export function getGenerationRun(teamId: number, runId: number): Promise<GenerationRun> {
+  return request<GenerationRun>(`/api/teams/${teamId}/generation-runs/${runId}`);
+}
+
+export function cancelGeneration(teamId: number, runId: number): Promise<GenerationRun> {
+  return post<GenerationRun>(`/api/teams/${teamId}/generation-runs/${runId}/cancel`, {});
+}
+
+export function getMonthlySchedule(teamId: number, year: number, month: number): Promise<MonthlySchedule> {
+  return request<MonthlySchedule>(`/api/teams/${teamId}/schedules/${year}/${month}`);
 }

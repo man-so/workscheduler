@@ -258,6 +258,73 @@ class SetupChatResponse(SetupSessionRead):
     needs_approval: bool
 
 
+class GenerationCreate(BaseModel):
+    year: int = Field(ge=2020, le=2200)
+    month: int = Field(ge=1, le=12)
+    agent_id: str = Field(pattern="^(codex|claude)$")
+    timeout_seconds: int = Field(default=60, ge=5, le=600)
+
+
+class ConstraintPayload(BaseModel):
+    schema_version: str = "1.0"
+    team_id: int
+    year: int
+    month: int
+    hard: dict[str, Any] = Field(default_factory=dict)
+    soft: dict[str, Any] = Field(default_factory=dict)
+    unsupported: list[str] = Field(default_factory=list)
+    source: str = "agent"
+
+
+class GenerationRunRead(BaseModel):
+    id: int
+    team_id: int
+    year: int
+    month: int
+    agent_id: str
+    status: str
+    timeout_seconds: int
+    constraints: ConstraintPayload | None = None
+    result: dict[str, Any] | None = None
+    log_text: str | None = None
+    error_message: str | None = None
+    cancel_requested: bool
+    started_at: Any = None
+    completed_at: Any = None
+    created_at: Any = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CalendarAssignment(BaseModel):
+    employee_id: int
+    employee_name: str
+    status: str
+    shift_type_id: int | None = None
+    shift_type_name: str | None = None
+    category: str | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    ends_next_day: bool = False
+    color: str | None = None
+
+
+class CalendarDay(BaseModel):
+    local_date: date
+    groups: dict[str, list[CalendarAssignment]]
+    assignments: list[CalendarAssignment]
+
+
+class MonthlyScheduleRead(BaseModel):
+    schedule_id: int
+    version_id: int
+    version_no: int
+    year: int
+    month: int
+    status: str
+    solver_status: str | None = None
+    days: list[CalendarDay]
+
+
 class SetupApproveResponse(BaseModel):
     applied: list[ProposedChange]
     summary: SetupSummary

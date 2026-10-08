@@ -8,11 +8,18 @@ import {
   createShiftType,
   createTeam,
   createWorkRule,
+  cancelGeneration,
+  generateSchedule,
+  getGenerationRun,
   getActiveSetupSession,
   getHealth,
+  getMonthlySchedule,
   getSetupSummary,
   listTeams,
   sendSetupMessage,
+  type GenerationRun,
+  type CalendarAssignment,
+  type MonthlySchedule,
   type SetupSession,
   type SetupSummary,
   type ShiftType,
@@ -40,6 +47,10 @@ export default function Home() {
   const [shiftForm, setShiftForm] = useState({ code: "DAY", name: "주간", category: "DAY", start: "09:00", end: "18:00" });
   const [coverageForm, setCoverageForm] = useState({ shiftTypeId: "", days: dayOptions[0].value, count: "1" });
   const [ruleForm, setRuleForm] = useState({ minRestHours: "11", maxConsecutive: "5", nightOff: true });
+  const [generation, setGeneration] = useState<GenerationRun | null>(null);
+  const [calendar, setCalendar] = useState<MonthlySchedule | null>(null);
+  const [generationMonth, setGenerationMonth] = useState({ year: 2026, month: 11 });
+  const [agentId, setAgentId] = useState<"codex" | "claude">("codex");
 
   const selectedTeam = useMemo(() => teams.find((team) => team.id === selectedTeamId) ?? null, [selectedTeamId, teams]);
 
@@ -166,6 +177,39 @@ export default function Home() {
     await refresh();
   }
 
+  async function handleGenerate(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedTeamId) return;
+    setError(null);
+    setCalendar(null);
+    try {
+      let next = await generateSchedule(selectedTeamId, { ...generationMonth, agent_id: agentId, timeout_seconds: 120 });
+      setGeneration(next);
+      for (let attempt = 0; attempt < 180 && ["SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"].indexOf(next.status) === -1; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        next = await getGenerationRun(selectedTeamId, next.id);
+        setGeneration(next);
+      }
+      if (next.status === "SUCCEEDED") {
+        setCalendar(await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
+      } else if (next.status === "INFEASIBLE") {
+        const conflicts = Array.isArray(next.result?.conflicts) ? next.result.conflicts.join(" ") : "Hard constraint 충돌을 확인하세요.";
+        setError(`근무표를 생성하지 못했습니다. ${conflicts}`);
+      } else if (next.status === "FAILED") {
+        const unsupported = Array.isArray(next.result?.unsupported) ? next.result.unsupported.join(" ") : "";
+        setError((next.error_message ?? unsupported) || "에이전트 실행에 실패했습니다.");
+      }
+    } catch {
+      setError("근무표 생성 API에 연결할 수 없습니다.");
+    }
+  }
+
+  async function handleCancelGeneration() {
+    if (!selectedTeamId || !generation) return;
+    const next = await cancelGeneration(selectedTeamId, generation.id);
+    setGeneration(next);
+  }
+
   const shiftTypes: ShiftType[] = summary?.shift_types ?? [];
 
   return (
@@ -173,8 +217,8 @@ export default function Home() {
       <div className="mx-auto flex max-w-7xl flex-col gap-5">
         <header className="flex flex-col gap-3 border-b border-slate-200 pb-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm font-semibold text-emerald-700">Phase 2</p>
-            <h1 className="text-3xl font-semibold">근무형태 설정</h1>
+            <p className="text-sm font-semibold text-emerald-700">Phase 3</p>
+            <h1 className="text-3xl font-semibold">AI 근무표 생성</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
               왼쪽에서 설정 상태와 직접 입력 폼을 관리하고, 오른쪽 챗봇에서 누락된 항목만 질문받아 변경사항을 승인합니다.
             </p>
@@ -307,8 +351,55 @@ export default function Home() {
             </form>
           </aside>
         </div>
+
+        <section className="rounded border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">에이전트 → CP-SAT 근무표</h2>
+              <p className="mt-1 text-sm text-slate-500">승인된 설정만 에이전트에 전달하고, 계산과 검증은 로컬에서 수행합니다.</p>
+            </div>
+            <form onSubmit={handleGenerate} className="flex flex-wrap items-end gap-2">
+              <label className="text-xs text-slate-500">연도<input type="number" min="2020" max="2200" className="mt-1 block w-24 rounded border border-slate-300 px-2 py-2 text-sm text-slate-950" value={generationMonth.year} onChange={(event) => setGenerationMonth({ ...generationMonth, year: Number(event.target.value) })} /></label>
+              <label className="text-xs text-slate-500">월<input type="number" min="1" max="12" className="mt-1 block w-16 rounded border border-slate-300 px-2 py-2 text-sm text-slate-950" value={generationMonth.month} onChange={(event) => setGenerationMonth({ ...generationMonth, month: Number(event.target.value) })} /></label>
+              <label className="text-xs text-slate-500">에이전트<select className="mt-1 block rounded border border-slate-300 px-2 py-2 text-sm text-slate-950" value={agentId} onChange={(event) => setAgentId(event.target.value as "codex" | "claude")}><option value="codex">Codex CLI</option><option value="claude">Claude Code</option></select></label>
+              <button className="rounded bg-emerald-700 px-3 py-2 text-sm font-semibold text-white">근무표 생성</button>
+              {generation && ["QUEUED", "RUNNING", "SOLVING"].includes(generation.status) ? <button type="button" onClick={handleCancelGeneration} className="rounded border border-red-300 px-3 py-2 text-sm font-semibold text-red-700">취소</button> : null}
+            </form>
+          </div>
+          {generation ? <p className="mt-3 text-sm text-slate-600">실행 #{generation.id} · {generation.status} · {generation.error_message ?? ""}</p> : null}
+          {calendar ? <MonthlyCalendar calendar={calendar} /> : null}
+        </section>
       </div>
     </main>
+  );
+}
+
+function MonthlyCalendar({ calendar }: { calendar: MonthlySchedule }) {
+  const firstDay = new Date(calendar.year, calendar.month - 1, 1).getDay();
+  const cells = [...Array(firstDay).fill(null), ...calendar.days];
+  return (
+    <div className="mt-5 overflow-x-auto rounded border border-slate-200">
+      <div className="min-w-[980px]">
+        <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50 text-center text-xs font-semibold text-slate-600">
+          {["일", "월", "화", "수", "목", "금", "토"].map((day) => <div key={day} className="p-2">{day}</div>)}
+        </div>
+        <div className="grid grid-cols-7">
+          {cells.map((day, index) => day ? (
+            <div key={day.local_date} className="min-h-44 border-b border-r border-slate-200 p-2 align-top">
+              <div className="text-xs font-semibold text-slate-500">{day.local_date.slice(8, 10)}일</div>
+              <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">
+                {(Object.entries(day.groups) as [string, CalendarAssignment[]][]).map(([group, assignments]) => (
+                  <div key={group}>
+                    <div className="text-[11px] font-semibold text-slate-500">{group} ({assignments.length})</div>
+                    <div className="text-xs leading-5 text-slate-800">{assignments.map((assignment) => assignment.employee_name).join(", ")}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div key={`blank-${index}`} className="min-h-44 border-b border-r border-slate-200 bg-slate-50" />)}
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 # AI Shift Scheduler
 
-팀별 근무표 자동 생성을 위한 웹앱입니다. 현재 구현 단계는 Phase 2이며, 기술명세서 v2.0과 `docs/IMPLEMENTATION_PLAN.md`를 기준으로 기본 프로젝트 구조, 데이터 모델, API, 설정 폼, 근무형태 설정 챗봇을 제공합니다.
+팀별 근무표 자동 생성을 위한 앱입니다. 현재 구현 단계는 Phase 3이며, 설정 폼, 근무형태 설정 챗봇, 에이전트 기반 Constraint JSON 생성, OR-Tools CP-SAT 월간 근무표 생성을 제공합니다.
 
 ## 현재 범위
 
@@ -18,11 +18,15 @@
 - 누락 항목과 충돌 항목 표시
 - 챗봇 변경사항 미리보기 및 승인 후 저장
 - LLM API Key 없이 동작하는 오프라인 Provider Adapter
+- 선택한 Codex CLI / Claude Code의 제한된 비대화형 실행과 실행 기록
+- 승인된 설정 JSON 기반 Constraint JSON 검증
+- OR-Tools CP-SAT 기반 월간 배정, Hard/Soft 제약, 공정성 목적함수
+- INFEASIBLE 원인과 지원되지 않는 제약조건 보고
+- 모든 직원·모든 날짜를 포함하는 7열 월간 달력 API/UI
 - 백엔드 기본 테스트
 
 아직 구현하지 않음:
 
-- OR-Tools CP-SAT 자동 배정 엔진
 - Excel 내보내기
 - 확정/개정 버전 워크플로 전체
 
@@ -108,6 +112,11 @@ npm run build
 - `GET /api/teams/{team_id}/coverage-requirements`
 - `POST /api/teams/{team_id}/coverage-requirements`
 - `GET /api/teams/{team_id}/availability`
+- `GET /api/agents`
+- `POST /api/teams/{team_id}/schedules/generate`
+- `GET /api/teams/{team_id}/generation-runs/{run_id}`
+- `POST /api/teams/{team_id}/generation-runs/{run_id}/cancel`
+- `GET /api/teams/{team_id}/schedules/{year}/{month}`
 - `POST /api/teams/{team_id}/availability`
 
 ## Phase 2 챗봇 동작
@@ -120,6 +129,16 @@ npm run build
 - 관리자가 승인해야 데이터베이스에 반영됩니다.
 - 대화 도중 종료해도 active setup session으로 복구합니다.
 - 외부 LLM 연결은 선택 사항이며 Phase 2에서는 직접 호출하지 않습니다.
+
+## Phase 3 동작
+
+- 에이전트에는 전체 챗봇 대화가 아니라 승인된 팀 설정 JSON만 전달합니다.
+- Codex는 `exec --sandbox read-only --skip-git-repo-check --output-schema`와 임시 작업 디렉터리를 사용합니다.
+- Claude Code는 `-p --output-format json --permission-mode plan --max-turns 3`을 사용합니다.
+- 생성된 Python 코드나 셸 명령은 실행하지 않습니다. 에이전트 응답은 JSON schema와 서버 검증을 통과해야 합니다.
+- CP-SAT는 직원 계약, 가능 유형, 휴무, 필요 인원, 휴식, 연속근무, 야간 후 휴무 데이터를 동적으로 제약으로 구성합니다.
+- 결과는 `DRAFT` 버전으로 저장되며 관리자 확정 전 상태입니다.
+- Codex/Claude 인증·사용량·timeout 실패는 실행 기록에 저장하고 근무표를 생성하지 않습니다.
 
 ## Electron 전환 PoC
 
@@ -140,10 +159,8 @@ Windows 설치파일 생성:
 
 ```bash
 cd backend
-.venv\Scripts\pyinstaller.exe --noconfirm --clean --onefile --name workscheduler-api --paths backend launcher.py
+.venv\Scripts\pyinstaller.exe --noconfirm --clean workscheduler-api.spec
 cd ..
-New-Item -ItemType Directory -Force backend\dist
-Copy-Item -Force dist\workscheduler-api.exe backend\dist\workscheduler-api.exe
 cd electron
 $env:CSC_IDENTITY_AUTO_DISCOVERY="false"
 npm run dist
