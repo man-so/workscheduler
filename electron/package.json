@@ -1,0 +1,27 @@
+{
+  "name": "ai-shift-scheduler-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "dist": "npm run build:frontend && electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "39.0.0",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "com.man-so.ai-shift-scheduler",
+    "productName": "AI Shift Scheduler",
+    "directories": { "output": "dist" },
+    "files": ["main.cjs", "preload.cjs", "package.json"],
+    "extraResources": [
+      { "from": "../frontend/out", "to": "frontend/out" },
+      { "from": "../backend/dist/workscheduler-api.exe", "to": "backend/workscheduler-api.exe" }
+    ],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "signAndEditExecutable": false },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true }
+  }
+}

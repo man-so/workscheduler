@@ -25,6 +25,78 @@ export type ShiftType = {
   category: string;
   start_time: string | null;
   end_time: string | null;
+  ends_next_day: boolean;
+  break_minutes: number;
+  paid_minutes: number;
+  is_work: boolean;
+};
+
+export type WorkRule = {
+  id: number;
+  team_id: number;
+  name: string;
+  min_rest_minutes: number | null;
+  max_consecutive_work_days: number | null;
+  max_consecutive_night_shifts: number | null;
+  night_requires_next_day_off: boolean;
+};
+
+export type CoverageRequirement = {
+  id: number;
+  team_id: number;
+  name: string;
+  shift_type_id: number;
+  days_of_week_json: string;
+  min_count: number;
+  target_count: number;
+  max_count: number | null;
+  priority: number;
+  qualification_requirements_json: string | null;
+  is_active: boolean;
+};
+
+export type SetupQuestion = {
+  id: string;
+  label: string;
+  question: string;
+  kind: string;
+  options: string[];
+};
+
+export type ProposedChange = {
+  entity: string;
+  action: string;
+  label: string;
+  before: unknown;
+  after: unknown;
+};
+
+export type SetupSummary = {
+  team: Team;
+  employees: Employee[];
+  shift_types: ShiftType[];
+  work_rules: WorkRule[];
+  employee_contracts: unknown[];
+  coverage_requirements: CoverageRequirement[];
+  leave_requests: unknown[];
+  availability: unknown[];
+  missing_fields: string[];
+  conflicts: string[];
+  completion_percent: number;
+  questions: SetupQuestion[];
+};
+
+export type SetupSession = {
+  id: number;
+  team_id: number;
+  status: string;
+  pending_patch: Record<string, unknown> | null;
+  messages: { role: string; content: string }[];
+  missing_fields: string[];
+  warnings: string[];
+  proposed_changes: ProposedChange[];
+  questions: SetupQuestion[];
+  needs_approval?: boolean;
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
@@ -46,6 +118,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function post<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
 export function getHealth(): Promise<HealthResponse> {
   return request<HealthResponse>("/api/health");
 }
@@ -60,4 +136,46 @@ export function listEmployees(teamId: number): Promise<Employee[]> {
 
 export function listShiftTypes(teamId: number): Promise<ShiftType[]> {
   return request<ShiftType[]>(`/api/teams/${teamId}/shift-types`);
+}
+
+export function createTeam(name: string): Promise<Team> {
+  return post<Team>("/api/teams", { name });
+}
+
+export function createEmployee(teamId: number, displayName: string): Promise<Employee> {
+  return post<Employee>(`/api/teams/${teamId}/employees`, {
+    employee_no: `EMP-${displayName}`,
+    display_name: displayName
+  });
+}
+
+export function createShiftType(teamId: number, payload: Partial<ShiftType> & { code: string; name: string; category: string }): Promise<ShiftType> {
+  return post<ShiftType>(`/api/teams/${teamId}/shift-types`, payload);
+}
+
+export function createWorkRule(teamId: number, payload: Partial<WorkRule> & { name: string }): Promise<WorkRule> {
+  return post<WorkRule>(`/api/teams/${teamId}/work-rules`, payload);
+}
+
+export function createCoverageRequirement(
+  teamId: number,
+  payload: Omit<CoverageRequirement, "id" | "team_id">
+): Promise<CoverageRequirement> {
+  return post<CoverageRequirement>(`/api/teams/${teamId}/coverage-requirements`, payload);
+}
+
+export function getSetupSummary(teamId: number): Promise<SetupSummary> {
+  return request<SetupSummary>(`/api/teams/${teamId}/setup-summary`);
+}
+
+export function getActiveSetupSession(teamId: number): Promise<SetupSession> {
+  return request<SetupSession>(`/api/teams/${teamId}/setup-sessions/active`);
+}
+
+export function sendSetupMessage(teamId: number, sessionId: number, message: string): Promise<SetupSession> {
+  return post<SetupSession>(`/api/teams/${teamId}/setup-sessions/${sessionId}/messages`, { message });
+}
+
+export function approveSetupPatch(teamId: number, sessionId: number): Promise<{ applied: ProposedChange[]; summary: SetupSummary }> {
+  return post<{ applied: ProposedChange[]; summary: SetupSummary }>(`/api/teams/${teamId}/setup-sessions/${sessionId}/approve`, {});
 }

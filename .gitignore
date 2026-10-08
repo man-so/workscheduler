@@ -13,6 +13,8 @@ node_modules/
 .next/
 out/
 dist/
+build/
+*.spec
 coverage/
 *.tsbuildinfo
 npm-debug.log*

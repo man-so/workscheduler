@@ -45,6 +45,19 @@ class AssignmentSource(StrEnum):
     REVISION = "REVISION"
 
 
+class AvailabilityType(StrEnum):
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    PREFERRED_OFF = "PREFERRED_OFF"
+    PREFERRED_WORK = "PREFERRED_WORK"
+
+
+class SetupSessionStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    CANCELED = "CANCELED"
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -98,6 +111,39 @@ class ShiftType(Base):
     effective_to: Mapped[date | None] = mapped_column(Date)
 
 
+class EmployeeContract(Base):
+    __tablename__ = "employee_contracts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    effective_from: Mapped[date | None] = mapped_column(Date)
+    effective_to: Mapped[date | None] = mapped_column(Date)
+    weekly_work_days: Mapped[int | None] = mapped_column(Integer)
+    weekly_pattern_json: Mapped[str | None] = mapped_column(Text)
+    target_minutes_per_week: Mapped[int | None] = mapped_column(Integer)
+    allowed_shift_type_ids_json: Mapped[str | None] = mapped_column(Text)
+    restrictions_json: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CoverageRequirement(Base):
+    __tablename__ = "coverage_requirements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    shift_type_id: Mapped[int] = mapped_column(ForeignKey("shift_types.id"), nullable=False, index=True)
+    days_of_week_json: Mapped[str] = mapped_column(Text, nullable=False)
+    min_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    target_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_count: Mapped[int | None] = mapped_column(Integer)
+    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    qualification_requirements_json: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class WorkRule(Base):
     __tablename__ = "work_rules"
 
@@ -126,6 +172,20 @@ class LeaveRequest(Base):
     status: Mapped[str] = mapped_column(String(24), default=LeaveStatus.REQUESTED, nullable=False)
     leave_type: Mapped[str] = mapped_column(String(60), default="ANNUAL", nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class Availability(Base):
+    __tablename__ = "availability"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), nullable=False, index=True)
+    local_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    availability_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    shift_type_id: Mapped[int | None] = mapped_column(ForeignKey("shift_types.id"))
+    reason_code: Mapped[str | None] = mapped_column(String(80))
+    note: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(24), default="MANUAL", nullable=False)
 
 
 class Schedule(Base):
@@ -170,5 +230,19 @@ class Assignment(Base):
     locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     source: Mapped[str] = mapped_column(String(24), default=AssignmentSource.MANUAL, nullable=False)
     change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class SetupSession(Base):
+    __tablename__ = "setup_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), default=SetupSessionStatus.ACTIVE, nullable=False)
+    pending_patch_json: Mapped[str | None] = mapped_column(Text)
+    messages_json: Mapped[str | None] = mapped_column(Text)
+    missing_fields_json: Mapped[str | None] = mapped_column(Text)
+    warnings_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

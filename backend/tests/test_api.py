@@ -101,3 +101,95 @@ def test_phase_one_core_data_flow() -> None:
     assignments = client.get(f"/api/teams/{team['id']}/assignments").json()
     assert len(employees) == 1
     assert len(assignments) == 1
+
+
+def test_setup_chat_preview_and_approval_with_overnight_shift() -> None:
+    team = client.post("/api/teams", json={"name": "챗봇 테스트"}).json()
+    session = client.get(f"/api/teams/{team['id']}/setup-sessions/active").json()
+
+    response = client.post(
+        f"/api/teams/{team['id']}/setup-sessions/{session['id']}/messages",
+        json={
+            "message": "직원은 김하나, 이둘. 주간 09:00-18:00, 야간 22:00-06:00. 최소 휴식 11시간, 연속근무 5일, 야간 후 휴무."
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_approval"] is True
+    assert body["pending_patch"]["shift_types"][1]["ends_next_day"] is True
+
+    approval = client.post(f"/api/teams/{team['id']}/setup-sessions/{session['id']}/approve")
+    assert approval.status_code == 200
+    summary = approval.json()["summary"]
+    assert len(summary["employees"]) == 2
+    assert len(summary["shift_types"]) == 2
+    assert summary["work_rules"][0]["min_rest_minutes"] == 660
+
+
+def test_mixed_weekly_contracts_and_coverage() -> None:
+    team = client.post("/api/teams", json={"name": "계약 테스트"}).json()
+    emp4 = client.post(
+        f"/api/teams/{team['id']}/employees",
+        json={"employee_no": "EMP-4", "display_name": "주사일"},
+    ).json()
+    emp5 = client.post(
+        f"/api/teams/{team['id']}/employees",
+        json={"employee_no": "EMP-5", "display_name": "주오일"},
+    ).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "DAY-MIX", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "18:00:00"},
+    ).json()
+
+    assert client.post(
+        f"/api/teams/{team['id']}/employee-contracts",
+        json={"employee_id": emp4["id"], "weekly_work_days": 4, "allowed_shift_type_ids_json": f"[{shift['id']}]"},
+    ).status_code == 201
+    assert client.post(
+        f"/api/teams/{team['id']}/employee-contracts",
+        json={"employee_id": emp5["id"], "weekly_work_days": 5, "allowed_shift_type_ids_json": f"[{shift['id']}]"},
+    ).status_code == 201
+
+    coverage = client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={
+            "name": "평일 주간",
+            "shift_type_id": shift["id"],
+            "days_of_week_json": "[\"MON\",\"TUE\",\"WED\",\"THU\",\"FRI\"]",
+            "min_count": 1,
+            "target_count": 1,
+            "max_count": 1,
+        },
+    )
+    assert coverage.status_code == 201
+    summary = client.get(f"/api/teams/{team['id']}/setup-summary").json()
+    assert summary["conflicts"] == []
+
+
+def test_conflicting_coverage_validation_and_bad_llm_json() -> None:
+    from app.llm import validate_llm_json
+
+    team = client.post("/api/teams", json={"name": "검증 테스트"}).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "DAY-CONFLICT", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "18:00:00"},
+    ).json()
+    response = client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={
+            "name": "잘못된 필요 인원",
+            "shift_type_id": shift["id"],
+            "days_of_week_json": "[\"MON\"]",
+            "min_count": 2,
+            "target_count": 3,
+            "max_count": 1,
+        },
+    )
+    assert response.status_code == 422
+
+    try:
+        validate_llm_json("{\"intent\":\"setup\"}")
+    except ValueError as exc:
+        assert "missing fields" in str(exc)
+    else:
+        raise AssertionError("invalid LLM JSON should fail schema validation")
