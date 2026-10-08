@@ -1,0 +1,7 @@
+fastapi>=0.118,<1.0
+uvicorn[standard]>=0.37,<1.0
+sqlalchemy>=2.0,<3.0
+pydantic>=2.12,<3.0
+python-dotenv>=1.1,<2.0
+pytest>=8.4,<9.0
+httpx>=0.28,<1.0
