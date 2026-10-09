@@ -120,6 +120,15 @@ export default function Home() {
     await refresh(team.id);
   }
 
+  async function handleSelectTeam(teamId: number) {
+    setSelectedTeamId(teamId);
+    setCalendar(null);
+    setSelectedDay(null);
+    setValidation(null);
+    setVersions([]);
+    await refresh(teamId);
+  }
+
   async function handleCreateEmployee(event: FormEvent) {
     event.preventDefault();
     if (!selectedTeamId || !employeeName.trim()) return;
@@ -308,8 +317,16 @@ export default function Home() {
               왼쪽에서 설정 상태와 직접 입력 폼을 관리하고, 오른쪽 챗봇에서 누락된 항목만 질문받아 변경사항을 승인합니다.
             </p>
           </div>
-          <div className="text-sm text-slate-600">
-            상태 <span className="font-semibold text-slate-950">{state}</span>
+          <div className="flex flex-col gap-2 text-sm text-slate-600">
+            <label>
+              팀
+              <select className="mt-1 block min-w-48 rounded border border-slate-300 bg-white px-2 py-2 text-sm text-slate-950" value={selectedTeamId ?? ""} onChange={(event) => handleSelectTeam(Number(event.target.value))}>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>{team.name}</option>
+                ))}
+              </select>
+            </label>
+            <div>상태 <span className="font-semibold text-slate-950">{state}</span></div>
           </div>
         </header>
 

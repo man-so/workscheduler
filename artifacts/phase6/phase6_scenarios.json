@@ -1,0 +1,167 @@
+{
+  "database": "C:\\Users\\p\\Desktop\\vibecoding\\근무표 자동작성\\artifacts\\phase6\\phase6.db",
+  "generated_at": "2026-10-09T15:03:45",
+  "scenarios": [
+    {
+      "code": "A",
+      "name": "A. 8명 주간 야간 휴무",
+      "status": "SUCCEEDED",
+      "solver_status": "FEASIBLE",
+      "elapsed_seconds": 30.041355599998496,
+      "validation_ok": true,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {
+        "employees": 8,
+        "night_min": 3,
+        "night_max": 4,
+        "work_min": 8,
+        "work_max": 16
+      },
+      "excel": {
+        "open_ok": true,
+        "sheets_ok": true,
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "all_days_present": true,
+        "missing_days": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape",
+        "fit_to_width": 1
+      },
+      "notes": []
+    },
+    {
+      "code": "B",
+      "name": "B. 8명 주4 주5 혼합",
+      "status": "SUCCEEDED",
+      "solver_status": "OPTIMAL",
+      "elapsed_seconds": 0.03261490000295453,
+      "validation_ok": true,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {
+        "employees": 8,
+        "night_min": 0,
+        "night_max": 0,
+        "work_min": 4,
+        "work_max": 16
+      },
+      "excel": {
+        "open_ok": true,
+        "sheets_ok": true,
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "all_days_present": true,
+        "missing_days": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape",
+        "fit_to_width": 1
+      },
+      "notes": []
+    },
+    {
+      "code": "C",
+      "name": "C. 15명 조기 야간조기",
+      "status": "SUCCEEDED",
+      "solver_status": "OPTIMAL",
+      "elapsed_seconds": 3.73711600000388,
+      "validation_ok": true,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {
+        "employees": 15,
+        "night_min": 4,
+        "night_max": 4,
+        "work_min": 10,
+        "work_max": 15
+      },
+      "excel": {
+        "open_ok": true,
+        "sheets_ok": true,
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "all_days_present": true,
+        "missing_days": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape",
+        "fit_to_width": 1
+      },
+      "notes": []
+    },
+    {
+      "code": "D",
+      "name": "D. 25명 근무유형 10개",
+      "status": "SUCCEEDED",
+      "solver_status": "OPTIMAL",
+      "elapsed_seconds": 9.27829109999584,
+      "validation_ok": true,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {
+        "employees": 25,
+        "night_min": 7,
+        "night_max": 7,
+        "work_min": 9,
+        "work_max": 17
+      },
+      "excel": {
+        "open_ok": true,
+        "sheets_ok": true,
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "all_days_present": true,
+        "missing_days": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape",
+        "fit_to_width": 1
+      },
+      "notes": []
+    },
+    {
+      "code": "E",
+      "name": "E. 휴무 신청 집중",
+      "status": "SUCCEEDED",
+      "solver_status": "OPTIMAL",
+      "elapsed_seconds": 0.039442700013751164,
+      "validation_ok": true,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {
+        "employees": 10,
+        "night_min": 0,
+        "night_max": 0,
+        "work_min": 1,
+        "work_max": 9
+      },
+      "excel": {
+        "open_ok": true,
+        "sheets_ok": true,
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "all_days_present": true,
+        "missing_days": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape",
+        "fit_to_width": 1
+      },
+      "notes": []
+    },
+    {
+      "code": "F",
+      "name": "F. Hard Constraint 충돌",
+      "status": "INFEASIBLE",
+      "solver_status": "INFEASIBLE",
+      "elapsed_seconds": 0.008098799997242168,
+      "validation_ok": null,
+      "hard_errors": 0,
+      "soft_warnings": 0,
+      "fairness": {},
+      "excel": null,
+      "notes": [
+        "Hard constraint를 동시에 만족하는 해를 찾지 못했습니다.",
+        "필요 인원, 휴무, 근무 가능 유형, 휴식시간 또는 연속근무 제한을 확인하세요."
+      ]
+    }
+  ]
+}

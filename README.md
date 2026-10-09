@@ -202,6 +202,27 @@ npm run dist
 
 현재 PoC에서 확인한 범위는 Electron 보안 설정, 기존 UI 실행, 로컬 FastAPI 자동 시작/종료, SQLite 재실행 보존 경로, 에이전트 감지 IPC, PyInstaller 백엔드 번들, NSIS 설치파일 생성입니다. 실제 OR-Tools 배정과 에이전트의 규칙 조정은 Phase 3 이후 범위입니다.
 
+## Phase 6 통합 검증
+
+재현 가능한 가상 팀 A~F 검증은 다음 명령으로 실행합니다.
+
+```bash
+python scripts/phase6_validation.py
+```
+
+검증 결과는 `artifacts/phase6/phase6_scenarios.json`에 저장됩니다. A(8명), B(주4·주5 혼합), C(15명 조기·야간조기), D(25명·10개 유형), E(집중 휴무)는 CP-SAT 계산과 저장된 배정 검증, openpyxl 재오픈 검사를 통과했습니다. F는 충돌하는 Hard Constraint로 `INFEASIBLE`을 반환했으며 임의 배정을 만들지 않았습니다. A는 30초 제한에서 `FEASIBLE` 해를 반환했고 나머지는 `OPTIMAL`입니다.
+
+2026-10-09 환경에서 Codex CLI 설치는 확인했지만 15초 제한 내 실제 호출이 완료되지 않아 LIVE 검증은 `BLOCKED`입니다. Claude Code는 설치되어 있지 않아 `BLOCKED`입니다. 인증 우회나 대체 자격증명은 사용하지 않았습니다. Windows unpacked Electron은 포함된 FastAPI 실행파일 단독 기동까지 확인했으나 Electron 전체 실행은 즉시 종료되어 설치형 앱 검증은 `BLOCKED`로 남아 있습니다.
+
+달력 화면 캡처 도구는 다음 명령으로 실행할 수 있습니다. 화면 데이터와 Excel 산출물은 검증용 로컬 artifacts에 저장되며 개인정보가 없는 가상 직원만 사용합니다.
+
+```bash
+cd frontend
+npm run build
+cd ../electron
+npm exec -- electron ../scripts/capture_phase6_screenshots.cjs
+```
+
 ## Phase 3 이전 메모
 
 Phase 3에서는 사용자 승인 후 OR-Tools CP-SAT 근무 배정 엔진을 진행합니다. 현재 Phase 2에서는 근무 배정 자동 생성 기능을 의도적으로 구현하지 않았습니다.

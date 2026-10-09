@@ -25,3 +25,8 @@ pnpm-debug.log*
 
 .DS_Store
 Thumbs.db
+
+artifacts/phase6/*.db
+artifacts/phase6/*.xlsx
+artifacts/phase6/*.log
+artifacts/phase6/screenshots/
