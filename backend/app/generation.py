@@ -104,7 +104,13 @@ def run_generation(run_id: int, team_id: int, year: int, month: int, agent_id: s
         result_data.update({"objective_value": solved.objective_value, "conflicts": solved.conflicts})
         _set_run(run_id, status=models.AgentRunStatus.SUCCEEDED, result_json=dumps(result_data), completed_at=datetime.now(UTC))
     except AgentRunError as exc:
-        _set_run(run_id, status=models.AgentRunStatus.CANCELED if cancel_event.is_set() else models.AgentRunStatus.FAILED, error_message=str(exc), completed_at=datetime.now(UTC))
+        _set_run(
+            run_id,
+            status=models.AgentRunStatus.CANCELED if cancel_event.is_set() else models.AgentRunStatus.FAILED,
+            error_message=str(exc),
+            log_text=getattr(exc, "log_text", None),
+            completed_at=datetime.now(UTC),
+        )
     except Exception as exc:  # Persist unexpected worker failures for the UI instead of losing them.
         _set_run(run_id, status=models.AgentRunStatus.FAILED, error_message=f"generation failed: {exc}", completed_at=datetime.now(UTC))
     finally:
