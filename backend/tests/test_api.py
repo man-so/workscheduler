@@ -420,3 +420,169 @@ def test_excel_export_contains_calendar_summaries_and_all_employees(monkeypatch)
         assert employee["display_name"] in employee_text
     assert "31일" in calendar_text
     assert "특수근무" in stats_text
+
+
+def test_leave_types_and_compensatory_leave_tracking() -> None:
+    team = client.post("/api/teams", json={"name": "휴무유형 테스트"}).json()
+    leave_types = client.get(f"/api/teams/{team['id']}/leave-types").json()
+    by_code = {item["code"]: item for item in leave_types}
+    assert {"REGULAR", "ANNUAL", "COMPENSATORY", "SPECIAL", "UNSPECIFIED"}.issubset(by_code)
+
+    employee = client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-LEAVE", "display_name": "휴무 직원"}).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "LEAVE-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00", "paid_minutes": 480},
+    ).json()
+    origin = client.post(
+        f"/api/teams/{team['id']}/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-10-02", "status": "WORK", "shift_type_id": shift["id"]},
+    ).json()
+
+    client.post(
+        f"/api/teams/{team['id']}/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-03", "status": "LEAVE", "leave_type_id": by_code["ANNUAL"]["id"]},
+    )
+    client.post(
+        f"/api/teams/{team['id']}/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-04", "status": "OFF", "leave_type_id": by_code["REGULAR"]["id"]},
+    )
+    comp = client.post(
+        f"/api/teams/{team['id']}/assignments",
+        json={
+            "employee_id": employee["id"],
+            "local_date": "2026-11-05",
+            "status": "LEAVE",
+            "leave_type_id": by_code["COMPENSATORY"]["id"],
+            "comp_origin_assignment_id": origin["id"],
+            "comp_amount_minutes": 480,
+            "comp_approval_status": "APPROVED",
+        },
+    )
+    assert comp.status_code == 201
+    assert comp.json()["comp_origin_work_date"] == "2026-10-02"
+
+    duplicate = client.post(
+        f"/api/teams/{team['id']}/assignments",
+        json={
+            "employee_id": employee["id"],
+            "local_date": "2026-11-06",
+            "status": "LEAVE",
+            "leave_type_id": by_code["COMPENSATORY"]["id"],
+            "comp_origin_assignment_id": origin["id"],
+            "comp_amount_minutes": 480,
+            "comp_approval_status": "APPROVED",
+        },
+    )
+    assert duplicate.status_code == 409
+
+
+def test_leave_labels_calendar_excel_and_origin_revalidation(monkeypatch) -> None:
+    from app import generation
+    from app import main
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
+    monkeypatch.setattr(generation, "run_agent", lambda agent_id, constraint_input, timeout_seconds, cancel_event=None: AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id]))
+
+    team = client.post("/api/teams", json={"name": "휴무표시 테스트"}).json()
+    leave_types = client.get(f"/api/teams/{team['id']}/leave-types").json()
+    by_code = {item["code"]: item for item in leave_types}
+    employee = client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-LABEL", "display_name": "표시 직원"}).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "LABEL-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00", "paid_minutes": 480},
+    ).json()
+    client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "월요일 주간", "shift_type_id": shift["id"], "days_of_week_json": "[\"MON\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    )
+    client.post(
+        f"/api/teams/{team['id']}/leave-requests",
+        json={"employee_id": employee["id"], "start_date": "2026-11-03", "end_date": "2026-11-03", "status": "APPROVED", "leave_type": "ANNUAL"},
+    )
+    client.post(
+        f"/api/teams/{team['id']}/availability",
+        json={"employee_id": employee["id"], "local_date": "2026-11-04", "availability_type": "PREFERRED_OFF", "leave_type_id": by_code["REGULAR"]["id"]},
+    )
+
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 11, "agent_id": "codex", "timeout_seconds": 5})
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+
+    calendar = client.get(f"/api/teams/{team['id']}/schedules/2026/11").json()
+    annual_day = next(day for day in calendar["days"] if day["local_date"] == "2026-11-03")
+    assert annual_day["assignments"][0]["leave_label"] == "연차"
+    regular_day = next(day for day in calendar["days"] if day["local_date"] == "2026-11-04")
+    assert regular_day["assignments"][0]["leave_label"] == "정기휴무"
+
+    origin_day = next(day for day in calendar["days"] if day["local_date"] == "2026-11-02")
+    origin_assignment = origin_day["assignments"][0]
+    comp_update = client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={
+            "employee_id": employee["id"],
+            "local_date": "2026-11-05",
+            "status": "LEAVE",
+            "shift_type_id": None,
+            "leave_type_id": by_code["COMPENSATORY"]["id"],
+            "comp_origin_assignment_id": origin_assignment["assignment_id"],
+            "comp_origin_work_date": "2026-11-02",
+            "comp_amount_minutes": 480,
+            "comp_approval_status": "APPROVED",
+        },
+    )
+    assert comp_update.status_code == 200
+    comp_day = next(day for day in comp_update.json()["days"] if day["local_date"] == "2026-11-05")
+    assert comp_day["assignments"][0]["leave_label"] == "대휴(11/2)"
+
+    excel = client.get(f"/api/teams/{team['id']}/schedules/2026/11/export.xlsx")
+    workbook = load_workbook(BytesIO(excel.content))
+    text = "\n".join(str(cell.value or "") for row in workbook["월간 달력"].iter_rows() for cell in row)
+    employee_text = "\n".join(str(cell.value or "") for row in workbook["직원별 현황"].iter_rows() for cell in row)
+    assert "표시 직원 · 연차" in text
+    assert "표시 직원 · 정기휴무" in text
+    assert "표시 직원 · 대휴(11/2)" in text
+    assert "대휴(11/2)" in employee_text
+
+    cancel_origin = client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-02", "status": "OFF", "shift_type_id": None},
+    )
+    assert cancel_origin.status_code == 200
+    validation = client.get(f"/api/teams/{team['id']}/schedules/2026/11/validation").json()
+    assert any(issue["code"] == "COMP_ORIGIN_RECHECK" for issue in validation["issues"])
+
+
+def test_setup_chat_parses_leave_type_phrases_and_requires_comp_origin() -> None:
+    team = client.post("/api/teams", json={"name": "휴무 챗봇"}).json()
+    employee = client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-CHAT-OFF", "display_name": "박지훈"}).json()
+    client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-CHAT-ANNUAL", "display_name": "이서연"})
+    client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-CHAT-REG", "display_name": "정다은"})
+    session = client.get(f"/api/teams/{team['id']}/setup-sessions/active").json()
+
+    missing_origin = client.post(
+        f"/api/teams/{team['id']}/setup-sessions/{session['id']}/messages",
+        json={"message": "10월 9일 박지훈 대휴"},
+    )
+    assert missing_origin.status_code == 200
+    approval_blocked = client.post(f"/api/teams/{team['id']}/setup-sessions/{session['id']}/approve")
+    assert approval_blocked.status_code == 422
+    assert "대체휴무" in approval_blocked.json()["detail"][0]
+
+    response = client.post(
+        f"/api/teams/{team['id']}/setup-sessions/{session['id']}/messages",
+        json={"message": "이서연은 10월 12일 연차. 정다은은 10월 15일 정기휴무"},
+    )
+    assert response.status_code == 200
+    patch = response.json()["pending_patch"]
+    assert len(patch["availability"]) == 2
+    approved = client.post(f"/api/teams/{team['id']}/setup-sessions/{session['id']}/approve")
+    assert approved.status_code == 200
+    availability = client.get(f"/api/teams/{team['id']}/availability").json()
+    assert len([item for item in availability if item["employee_id"] != employee["id"]]) == 2

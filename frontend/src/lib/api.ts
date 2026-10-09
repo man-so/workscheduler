@@ -41,6 +41,19 @@ export type WorkRule = {
   night_requires_next_day_off: boolean;
 };
 
+export type LeaveType = {
+  id: number;
+  team_id: number;
+  code: string;
+  name: string;
+  color: string | null;
+  is_paid: boolean;
+  requires_origin: boolean;
+  allows_split: boolean;
+  sort_order: number;
+  is_active: boolean;
+};
+
 export type CoverageRequirement = {
   id: number;
   team_id: number;
@@ -75,6 +88,7 @@ export type SetupSummary = {
   team: Team;
   employees: Employee[];
   shift_types: ShiftType[];
+  leave_types: LeaveType[];
   work_rules: WorkRule[];
   employee_contracts: unknown[];
   coverage_requirements: CoverageRequirement[];
@@ -118,6 +132,7 @@ export type GenerationRun = {
 };
 
 export type CalendarAssignment = {
+  assignment_id: number | null;
   employee_id: number;
   employee_name: string;
   status: string;
@@ -128,6 +143,16 @@ export type CalendarAssignment = {
   end_time: string | null;
   ends_next_day: boolean;
   color: string | null;
+  leave_type_id: number | null;
+  leave_type_code: string | null;
+  leave_type_name: string | null;
+  leave_label: string | null;
+  comp_origin_assignment_id: number | null;
+  comp_origin_work_date: string | null;
+  comp_amount_minutes: number | null;
+  comp_approval_status: string | null;
+  comp_validation_status: string | null;
+  comp_validation_message: string | null;
 };
 
 export type CalendarDay = {
@@ -218,6 +243,14 @@ export function listShiftTypes(teamId: number): Promise<ShiftType[]> {
   return request<ShiftType[]>(`/api/teams/${teamId}/shift-types`);
 }
 
+export function listLeaveTypes(teamId: number): Promise<LeaveType[]> {
+  return request<LeaveType[]>(`/api/teams/${teamId}/leave-types`);
+}
+
+export function createLeaveType(teamId: number, payload: Omit<LeaveType, "id" | "team_id">): Promise<LeaveType> {
+  return post<LeaveType>(`/api/teams/${teamId}/leave-types`, payload);
+}
+
 export function createTeam(name: string): Promise<Team> {
   return post<Team>("/api/teams", { name });
 }
@@ -285,6 +318,11 @@ export function updateScheduleAssignment(
     local_date: string;
     status: "WORK" | "OFF" | "LEAVE" | "OTHER";
     shift_type_id: number | null;
+    leave_type_id?: number | null;
+    comp_origin_assignment_id?: number | null;
+    comp_origin_work_date?: string | null;
+    comp_amount_minutes?: number | null;
+    comp_approval_status?: string | null;
     locked?: boolean;
     change_reason?: string | null;
   }

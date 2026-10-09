@@ -8,6 +8,7 @@ import {
   createShiftType,
   createTeam,
   createWorkRule,
+  createLeaveType,
   cancelGeneration,
   cloneScheduleVersion,
   confirmMonthlySchedule,
@@ -30,6 +31,7 @@ import {
   type MonthlySchedule,
   type ScheduleVersion,
   type ScheduleValidation,
+  type LeaveType,
   type SetupSession,
   type SetupSummary,
   type ShiftType,
@@ -57,6 +59,7 @@ export default function Home() {
   const [shiftForm, setShiftForm] = useState({ code: "DAY", name: "주간", category: "DAY", start: "09:00", end: "18:00" });
   const [coverageForm, setCoverageForm] = useState({ shiftTypeId: "", days: dayOptions[0].value, count: "1" });
   const [ruleForm, setRuleForm] = useState({ minRestHours: "11", maxConsecutive: "5", nightOff: true });
+  const [leaveTypeForm, setLeaveTypeForm] = useState({ code: "CUSTOM_OFF", name: "사용자 정의 휴무", color: "#f3f4f6" });
   const [generation, setGeneration] = useState<GenerationRun | null>(null);
   const [calendar, setCalendar] = useState<MonthlySchedule | null>(null);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
@@ -284,16 +287,45 @@ export default function Home() {
     setGeneration(next);
   }
 
+  async function handleCreateLeaveType(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedTeamId || !leaveTypeForm.code.trim() || !leaveTypeForm.name.trim()) return;
+    await createLeaveType(selectedTeamId, {
+      code: leaveTypeForm.code.trim().toUpperCase(),
+      name: leaveTypeForm.name.trim(),
+      color: leaveTypeForm.color,
+      is_paid: true,
+      requires_origin: false,
+      allows_split: false,
+      sort_order: 200,
+      is_active: true
+    });
+    setLeaveTypeForm({ code: "CUSTOM_OFF", name: "사용자 정의 휴무", color: "#f3f4f6" });
+    await refresh();
+  }
+
   async function handleAssignmentChange(assignment: CalendarAssignment, value: string) {
     if (!selectedTeamId || !calendar || !selectedDay) return;
-    const isOff = value === "OFF" || value === "LEAVE" || value === "OTHER";
+    const isLeaveType = value.startsWith("LEAVE_TYPE:");
+    const leaveTypeId = isLeaveType ? Number(value.replace("LEAVE_TYPE:", "")) : null;
+    const leaveType = summary?.leave_types.find((item) => item.id === leaveTypeId) ?? null;
+    let originDate: string | null = null;
+    if (leaveType?.requires_origin) {
+      originDate = window.prompt("대체휴무 발생 근무일을 YYYY-MM-DD 형식으로 입력하세요.", assignment.comp_origin_work_date ?? "")?.trim() || null;
+      if (!originDate) return;
+    }
+    const isOff = isLeaveType || value === "OFF" || value === "LEAVE" || value === "OTHER";
     const status = isOff ? value : "WORK";
     const shiftTypeId = isOff ? null : Number(value);
     const nextCalendar = await updateScheduleAssignment(selectedTeamId, calendar.year, calendar.month, {
       employee_id: assignment.employee_id,
       local_date: selectedDay.local_date,
-      status: status as "WORK" | "OFF" | "LEAVE" | "OTHER",
+      status: isLeaveType ? (leaveType?.code === "ANNUAL" || leaveType?.code === "SPECIAL" || leaveType?.code === "COMPENSATORY" ? "LEAVE" : "OFF") : status as "WORK" | "OFF" | "LEAVE" | "OTHER",
       shift_type_id: shiftTypeId,
+      leave_type_id: leaveTypeId,
+      comp_origin_work_date: originDate,
+      comp_amount_minutes: leaveType?.requires_origin ? 480 : null,
+      comp_approval_status: leaveType?.requires_origin ? "APPROVED" : null,
       change_reason: "calendar manual edit"
     });
     setCalendar(nextCalendar);
@@ -413,6 +445,16 @@ export default function Home() {
                   <button className="rounded bg-slate-950 px-3 py-2 text-sm font-semibold text-white sm:col-span-3">저장</button>
                 </form>
               </Panel>
+
+              <Panel title="휴무유형">
+                <form onSubmit={handleCreateLeaveType} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="코드" value={leaveTypeForm.code} onChange={(event) => setLeaveTypeForm({ ...leaveTypeForm, code: event.target.value })} />
+                  <input className="rounded border border-slate-300 px-3 py-2 text-sm" placeholder="휴무유형명" value={leaveTypeForm.name} onChange={(event) => setLeaveTypeForm({ ...leaveTypeForm, name: event.target.value })} />
+                  <input type="color" className="h-10 rounded border border-slate-300 px-1 py-1" value={leaveTypeForm.color} onChange={(event) => setLeaveTypeForm({ ...leaveTypeForm, color: event.target.value })} />
+                  <button className="rounded bg-slate-950 px-3 py-2 text-sm font-semibold text-white sm:col-span-3">추가</button>
+                </form>
+                <ItemList items={(summary?.leave_types ?? []).map((leaveType) => `${leaveType.name}${leaveType.requires_origin ? " · 발생근무 연결" : ""}`)} />
+              </Panel>
             </div>
           </section>
 
@@ -511,7 +553,7 @@ export default function Home() {
           {calendar ? (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
               <MonthlyCalendar calendar={calendar} selectedDate={selectedDay?.local_date ?? null} onSelectDay={setSelectedDay} />
-              <DayDetailPanel day={selectedDay} shiftTypes={shiftTypes} editable={canEditCalendar} onChangeAssignment={handleAssignmentChange} />
+              <DayDetailPanel day={selectedDay} shiftTypes={shiftTypes} leaveTypes={summary?.leave_types ?? []} editable={canEditCalendar} onChangeAssignment={handleAssignmentChange} />
             </div>
           ) : null}
         </section>
@@ -523,7 +565,7 @@ export default function Home() {
 function MonthlyCalendar({ calendar, selectedDate, onSelectDay }: { calendar: MonthlySchedule; selectedDate: string | null; onSelectDay: (day: CalendarDay) => void }) {
   const firstDay = new Date(calendar.year, calendar.month - 1, 1).getDay();
   const cells = [...Array(firstDay).fill(null), ...calendar.days];
-  const groupOrder = ["DAY", "EARLY_DAY", "NIGHT", "EARLY_NIGHT", "OTHER", "LEAVE", "OFF"];
+  const groupOrder = ["DAY", "EARLY_DAY", "NIGHT", "EARLY_NIGHT", "OTHER", "ANNUAL", "COMPENSATORY", "REGULAR", "SPECIAL", "UNSPECIFIED", "LEAVE", "OFF"];
   return (
     <div className="mt-5 overflow-x-auto rounded border border-slate-200">
       <div className="min-w-[980px]">
@@ -535,10 +577,10 @@ function MonthlyCalendar({ calendar, selectedDate, onSelectDay }: { calendar: Mo
             <button key={day.local_date} type="button" onClick={() => onSelectDay(day)} className={`min-h-44 border-b border-r border-slate-200 p-2 text-left align-top transition ${selectedDate === day.local_date ? "bg-emerald-50 ring-2 ring-inset ring-emerald-500" : "bg-white hover:bg-slate-50"}`}>
               <div className="text-xs font-semibold text-slate-500">{day.local_date.slice(8, 10)}일 · {day.assignments.length}명</div>
               <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">
-                {(Object.entries(day.groups) as [string, CalendarAssignment[]][]).sort(([left], [right]) => groupOrder.indexOf(left) - groupOrder.indexOf(right)).map(([group, assignments]) => (
+                {(Object.entries(day.groups) as [string, CalendarAssignment[]][]).sort(([left], [right]) => groupRank(left, groupOrder) - groupRank(right, groupOrder)).map(([group, assignments]) => (
                   <div key={group}>
                     <div className="text-[11px] font-semibold text-slate-500">{groupLabel(group)} ({assignments.length})</div>
-                    <div className="text-xs leading-5 text-slate-800">{assignments.map((assignment) => assignment.employee_name).join(", ")}</div>
+                    <div className="text-xs leading-5 text-slate-800">{assignments.map(assignmentDisplayName).join(", ")}</div>
                   </div>
                 ))}
               </div>
@@ -550,7 +592,7 @@ function MonthlyCalendar({ calendar, selectedDate, onSelectDay }: { calendar: Mo
   );
 }
 
-function DayDetailPanel({ day, shiftTypes, editable, onChangeAssignment }: { day: CalendarDay | null; shiftTypes: ShiftType[]; editable: boolean; onChangeAssignment: (assignment: CalendarAssignment, value: string) => void }) {
+function DayDetailPanel({ day, shiftTypes, leaveTypes, editable, onChangeAssignment }: { day: CalendarDay | null; shiftTypes: ShiftType[]; leaveTypes: LeaveType[]; editable: boolean; onChangeAssignment: (assignment: CalendarAssignment, value: string) => void }) {
   if (!day) {
     return (
       <aside className="mt-5 rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -569,11 +611,14 @@ function DayDetailPanel({ day, shiftTypes, editable, onChangeAssignment }: { day
           <div key={assignment.employee_id} className="grid grid-cols-[minmax(84px,1fr)_minmax(140px,1.3fr)] items-center gap-2 rounded border border-slate-200 p-2">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold">{assignment.employee_name}</div>
-              <div className="text-xs text-slate-500">{assignment.shift_type_name ?? statusLabel(assignment.status)}</div>
+              <div className="text-xs text-slate-500">{assignment.shift_type_name ?? assignment.leave_label ?? statusLabel(assignment.status)}</div>
+              {assignment.comp_validation_status === "WARN" ? <div className="mt-1 text-xs text-amber-700">{assignment.comp_validation_message}</div> : null}
             </div>
-            <select disabled={!editable} className="min-w-0 rounded border border-slate-300 px-2 py-2 text-sm disabled:bg-slate-100" value={assignment.status === "WORK" && assignment.shift_type_id ? String(assignment.shift_type_id) : assignment.status} onChange={(event) => onChangeAssignment(assignment, event.target.value)}>
+            <select disabled={!editable} className="min-w-0 rounded border border-slate-300 px-2 py-2 text-sm disabled:bg-slate-100" value={assignment.status === "WORK" && assignment.shift_type_id ? String(assignment.shift_type_id) : assignment.leave_type_id ? `LEAVE_TYPE:${assignment.leave_type_id}` : assignment.status} onChange={(event) => onChangeAssignment(assignment, event.target.value)}>
               <option value="OFF">휴무</option>
-              <option value="LEAVE">연차</option>
+              {leaveTypes.map((leaveType) => (
+                <option key={leaveType.id} value={`LEAVE_TYPE:${leaveType.id}`}>{leaveType.name}</option>
+              ))}
               <option value="OTHER">기타</option>
               {shiftTypes.filter((shift) => shift.is_work).map((shift) => (
                 <option key={shift.id} value={shift.id}>{shift.name}</option>
@@ -592,11 +637,26 @@ function groupLabel(value: string) {
     EARLY_DAY: "조기",
     NIGHT: "야간",
     EARLY_NIGHT: "야간 조기",
+    REGULAR: "정기휴무",
+    ANNUAL: "연차",
+    COMPENSATORY: "대체휴무",
+    SPECIAL: "특별휴무",
+    UNSPECIFIED: "유형 미지정",
     OFF: "휴무",
     LEAVE: "연차",
     OTHER: "기타"
   };
   return labels[value] ?? value;
+}
+
+function assignmentDisplayName(assignment: CalendarAssignment) {
+  if (assignment.status === "WORK") return assignment.employee_name;
+  return `${assignment.employee_name} · ${assignment.leave_label ?? statusLabel(assignment.status)}`;
+}
+
+function groupRank(value: string, order: string[]) {
+  const index = order.indexOf(value);
+  return index === -1 ? order.length : index;
 }
 
 function statusLabel(value: string) {

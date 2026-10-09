@@ -99,6 +99,23 @@ class WorkRuleRead(WorkRuleCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LeaveTypeCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=120)
+    color: str | None = None
+    is_paid: bool = True
+    requires_origin: bool = False
+    allows_split: bool = False
+    sort_order: int = 100
+    is_active: bool = True
+
+
+class LeaveTypeRead(LeaveTypeCreate):
+    id: int
+    team_id: int
+    model_config = ConfigDict(from_attributes=True)
+
+
 class EmployeeContractCreate(BaseModel):
     employee_id: int
     effective_from: date | None = None
@@ -168,6 +185,11 @@ class AvailabilityCreate(BaseModel):
     local_date: date
     availability_type: str = "PREFERRED_OFF"
     shift_type_id: int | None = None
+    leave_type_id: int | None = None
+    comp_origin_assignment_id: int | None = None
+    comp_origin_work_date: date | None = None
+    comp_amount_minutes: int | None = Field(default=None, ge=1)
+    comp_approval_status: str | None = None
     reason_code: str | None = None
     note: str | None = None
     source: str = "MANUAL"
@@ -184,6 +206,11 @@ class AssignmentCreate(BaseModel):
     local_date: date
     status: str
     shift_type_id: int | None = None
+    leave_type_id: int | None = None
+    comp_origin_assignment_id: int | None = None
+    comp_origin_work_date: date | None = None
+    comp_amount_minutes: int | None = Field(default=None, ge=1)
+    comp_approval_status: str | None = None
     version_id: int | None = None
     locked: bool = False
     source: str = "MANUAL"
@@ -207,6 +234,11 @@ class ScheduleAssignmentUpdate(BaseModel):
     local_date: date
     status: str = Field(pattern="^(WORK|OFF|LEAVE|OTHER)$")
     shift_type_id: int | None = None
+    leave_type_id: int | None = None
+    comp_origin_assignment_id: int | None = None
+    comp_origin_work_date: date | None = None
+    comp_amount_minutes: int | None = Field(default=None, ge=1)
+    comp_approval_status: str | None = None
     locked: bool = False
     change_reason: str | None = None
 
@@ -263,6 +295,7 @@ class SetupSummary(BaseModel):
     team: TeamRead
     employees: list[EmployeeRead]
     shift_types: list[ShiftTypeRead]
+    leave_types: list[LeaveTypeRead]
     work_rules: list[WorkRuleRead]
     employee_contracts: list[EmployeeContractRead]
     coverage_requirements: list[CoverageRequirementRead]
@@ -345,6 +378,7 @@ class GenerationRunRead(BaseModel):
 
 
 class CalendarAssignment(BaseModel):
+    assignment_id: int | None = None
     employee_id: int
     employee_name: str
     status: str
@@ -355,6 +389,16 @@ class CalendarAssignment(BaseModel):
     end_time: time | None = None
     ends_next_day: bool = False
     color: str | None = None
+    leave_type_id: int | None = None
+    leave_type_code: str | None = None
+    leave_type_name: str | None = None
+    leave_label: str | None = None
+    comp_origin_assignment_id: int | None = None
+    comp_origin_work_date: date | None = None
+    comp_amount_minutes: int | None = None
+    comp_approval_status: str | None = None
+    comp_validation_status: str | None = None
+    comp_validation_message: str | None = None
 
 
 class CalendarDay(BaseModel):

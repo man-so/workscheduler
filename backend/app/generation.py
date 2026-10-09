@@ -53,8 +53,28 @@ def _create_schedule(db: Any, team_id: int, year: int, month: int, solver_status
     )
     db.add(version)
     db.flush()
+    leave_types = db.scalars(select(models.LeaveType).where(models.LeaveType.team_id == team_id)).all()
+    leave_type_by_code = {item.code: item for item in leave_types}
+    leave_by_key: dict[tuple[int, date], int] = {}
+    leave_requests = db.scalars(select(models.LeaveRequest).where(models.LeaveRequest.team_id == team_id, models.LeaveRequest.status == models.LeaveStatus.APPROVED)).all()
+    for leave in leave_requests:
+        code = "ANNUAL" if leave.leave_type == "ANNUAL" else leave.leave_type
+        leave_type = leave_type_by_code.get(code) or leave_type_by_code.get("UNSPECIFIED")
+        if leave_type is None:
+            continue
+        current = leave.start_date
+        while current <= leave.end_date:
+            if current.year == year and current.month == month:
+                leave_by_key[(leave.employee_id, current)] = leave_type.id
+            current = date.fromordinal(current.toordinal() + 1)
+    availability = db.scalars(select(models.Availability).where(models.Availability.team_id == team_id)).all()
+    for item in availability:
+        if item.local_date.year == year and item.local_date.month == month and item.leave_type_id:
+            leave_by_key[(item.employee_id, item.local_date)] = item.leave_type_id
     for item in assignments:
         clean = {**item, "local_date": date.fromisoformat(item["local_date"])}
+        if clean.get("status") != models.AssignmentStatus.WORK:
+            clean["leave_type_id"] = leave_by_key.get((clean["employee_id"], clean["local_date"]))
         db.add(models.Assignment(version_id=version.id, team_id=team_id, source=models.AssignmentSource.SOLVER, **clean))
     schedule.active_version_id = version.id
     db.commit()

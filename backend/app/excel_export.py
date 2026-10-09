@@ -20,6 +20,11 @@ CATEGORY_COLORS = {
     "OFF": "F3F4F6",
     "LEAVE": "FCE5CD",
     "OTHER": "FFF2CC",
+    "REGULAR": "E5E7EB",
+    "ANNUAL": "FCE5CD",
+    "COMPENSATORY": "CFE2F3",
+    "SPECIAL": "D9D2E9",
+    "UNSPECIFIED": "F3F4F6",
 }
 
 CATEGORY_LABELS = {
@@ -30,6 +35,11 @@ CATEGORY_LABELS = {
     "OFF": "휴무",
     "LEAVE": "연차",
     "OTHER": "기타",
+    "REGULAR": "정기휴무",
+    "ANNUAL": "연차",
+    "COMPENSATORY": "대체휴무",
+    "SPECIAL": "특별휴무",
+    "UNSPECIFIED": "유형 미지정",
 }
 
 
@@ -65,11 +75,11 @@ def _apply_table_style(ws, max_row: int, max_column: int) -> None:
 def _assignment_label(item: schemas.CalendarAssignment) -> str:
     if item.status == models.AssignmentStatus.WORK:
         return item.shift_type_name or _label(item.category)
-    return _label(item.status)
+    return item.leave_label or _label(item.leave_type_code or item.status)
 
 
 def _ordered_groups(day: schemas.CalendarDay) -> list[tuple[str, list[schemas.CalendarAssignment]]]:
-    order = ["DAY", "EARLY_DAY", "NIGHT", "EARLY_NIGHT", "OTHER", "LEAVE", "OFF"]
+    order = ["DAY", "EARLY_DAY", "NIGHT", "EARLY_NIGHT", "OTHER", "ANNUAL", "COMPENSATORY", "REGULAR", "SPECIAL", "UNSPECIFIED", "LEAVE", "OFF"]
     return sorted(day.groups.items(), key=lambda item: order.index(item[0]) if item[0] in order else len(order))
 
 
@@ -115,7 +125,7 @@ def _build_calendar_sheet(ws, team: models.Team, version: models.ScheduleVersion
         day = day_by_date[current]
         lines = [f"{day_number}일"]
         for group, assignments in _ordered_groups(day):
-            names = ", ".join(item.employee_name for item in assignments)
+            names = ", ".join(item.employee_name if item.status == models.AssignmentStatus.WORK else f"{item.employee_name} · {_assignment_label(item)}" for item in assignments)
             lines.append(f"{_label(group)} ({len(assignments)}명): {names}")
         cell = ws.cell(row=row, column=column, value="\n".join(lines))
         cell.fill = _fill(next(iter(day.groups.keys()), "OTHER"))
@@ -158,7 +168,7 @@ def _build_employee_sheet(ws, calendar: schemas.MonthlyScheduleRead) -> None:
         for column_index, local_date in enumerate(dates, start=5):
             item = assignments[local_date]
             cell = ws.cell(row=row_index, column=column_index, value=_assignment_label(item))
-            cell.fill = _fill(item.category if item.status == models.AssignmentStatus.WORK else item.status)
+            cell.fill = _fill(item.category if item.status == models.AssignmentStatus.WORK else item.leave_type_code or item.status)
     ws.column_dimensions["A"].width = 18
     for column in range(2, len(headers) + 1):
         ws.column_dimensions[get_column_letter(column)].width = 11
@@ -173,7 +183,7 @@ def _build_shift_count_sheet(ws, calendar: schemas.MonthlyScheduleRead) -> None:
     counts: Counter[tuple[str, str]] = Counter()
     for day in calendar.days:
         for item in day.assignments:
-            key = (_assignment_label(item), _label(item.category if item.status == models.AssignmentStatus.WORK else item.status))
+            key = (_assignment_label(item), _label(item.category if item.status == models.AssignmentStatus.WORK else item.leave_type_code or item.status))
             counts[key] += 1
     for row_index, ((name, category), count) in enumerate(sorted(counts.items()), start=3):
         ws.cell(row=row_index, column=1, value=name)

@@ -31,6 +31,7 @@ def get_team_rows(db: Session, team_id: int) -> dict[str, list[Any]]:
     return {
         "employees": list(db.scalars(select(models.Employee).where(models.Employee.team_id == team_id))),
         "shift_types": list(db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == team_id))),
+        "leave_types": list(db.scalars(select(models.LeaveType).where(models.LeaveType.team_id == team_id))),
         "work_rules": list(db.scalars(select(models.WorkRule).where(models.WorkRule.team_id == team_id))),
         "employee_contracts": list(db.scalars(select(models.EmployeeContract).where(models.EmployeeContract.team_id == team_id))),
         "coverage_requirements": list(db.scalars(select(models.CoverageRequirement).where(models.CoverageRequirement.team_id == team_id))),
@@ -136,6 +137,7 @@ def analyze_setup(db: Session, team: models.Team) -> schemas.SetupSummary:
         team=team,
         employees=employees,
         shift_types=rows["shift_types"],
+        leave_types=rows["leave_types"],
         work_rules=rules,
         employee_contracts=contracts,
         coverage_requirements=coverage,
@@ -248,22 +250,62 @@ def parse_setup_message(message: str, team: models.Team, rows: dict[str, list[An
 
     employees_by_name = {employee.display_name: employee for employee in rows["employees"]}
     for match in re.finditer(r"([가-힣A-Za-z0-9 _-]+)\s*(?:은|는)\s*주\s*([45])\s*일", text):
-        employee = employees_by_name.get(match.group(1).strip())
+        employee = employees_by_name.get(match.group(1).strip().rstrip("은는"))
         if employee:
             patch["employee_contracts"].append({"employee_id": employee.id, "weekly_work_days": int(match.group(2))})
 
-    for match in re.finditer(r"([가-힣A-Za-z0-9 _-]+)\s*(\d{4}-\d{2}-\d{2})\s*(?:휴무|쉬)", text):
-        employee = employees_by_name.get(match.group(1).strip())
+    leave_type_by_code = {leave_type.code: leave_type for leave_type in rows.get("leave_types", [])}
+    leave_type_by_name = {leave_type.name: leave_type for leave_type in rows.get("leave_types", [])}
+    leave_words = [
+        ("대체휴무", "COMPENSATORY"),
+        ("대휴", "COMPENSATORY"),
+        ("연차", "ANNUAL"),
+        ("정기휴무", "REGULAR"),
+        ("특별휴무", "SPECIAL"),
+        ("휴무", "UNSPECIFIED"),
+    ]
+    date_pattern = r"((?:\d{4}-\d{2}-\d{2})|(?:\d{1,2}월\s*\d{1,2}일))"
+    for match in re.finditer(rf"{date_pattern}\s*([가-힣A-Za-z0-9 _-]+)\s*(대체휴무|대휴|연차|정기휴무|특별휴무|휴무|쉬)", text):
+        employee = employees_by_name.get(match.group(2).strip(" ."))
         if employee:
-            patch["availability"].append(
-                {
+            word = match.group(3)
+            code = next(code for label, code in leave_words if label == word)
+            local_date = normalize_date_text(match.group(1))
+            availability = {
+                "employee_id": employee.id,
+                "local_date": local_date,
+                "availability_type": "UNAVAILABLE" if code in {"ANNUAL", "COMPENSATORY", "SPECIAL"} else "PREFERRED_OFF",
+                "leave_type_id": leave_type_by_code.get(code).id if leave_type_by_code.get(code) else None,
+                "note": "챗봇 입력",
+                "source": "CHAT",
+            }
+            origin_match = re.search(rf"{re.escape(match.group(0))}.*?{date_pattern}\s*근무", text)
+            if code == "COMPENSATORY" and origin_match:
+                availability["comp_origin_work_date"] = normalize_date_text(origin_match.group(1))
+            if code == "COMPENSATORY" and not availability.get("comp_origin_work_date"):
+                availability["requires_origin"] = True
+            patch["availability"].append(availability)
+
+    for match in re.finditer(rf"([가-힣A-Za-z0-9 _-]+?)\s*(?:은|는)?\s*{date_pattern}\s*(대체휴무|대휴|연차|정기휴무|특별휴무|휴무|쉬)", text):
+        employee = employees_by_name.get(match.group(1).strip(" ."))
+        if employee:
+            word = match.group(3)
+            code = next(code for label, code in leave_words if label == word or (word == "쉬" and label == "휴무"))
+            local_date = normalize_date_text(match.group(2))
+            if any(item["employee_id"] == employee.id and item["local_date"] == local_date for item in patch["availability"]):
+                continue
+            leave_type = leave_type_by_code.get(code) or leave_type_by_name.get(word)
+            availability = {
                     "employee_id": employee.id,
-                    "local_date": match.group(2),
-                    "availability_type": "PREFERRED_OFF",
+                    "local_date": local_date,
+                    "availability_type": "UNAVAILABLE" if code in {"ANNUAL", "COMPENSATORY", "SPECIAL"} else "PREFERRED_OFF",
+                    "leave_type_id": leave_type.id if leave_type else None,
                     "note": "챗봇 입력",
                     "source": "CHAT",
                 }
-            )
+            if code == "COMPENSATORY":
+                availability["requires_origin"] = True
+            patch["availability"].append(availability)
 
     return patch
 
@@ -280,6 +322,17 @@ def parse_fairness_weights(text: str) -> str | None:
         if match:
             weights[key] = int(match.group(1))
     return dumps(weights) if weights else None
+
+
+def normalize_date_text(value: str) -> str:
+    value = value.replace(" ", "")
+    if "-" in value:
+        return value
+    match = re.match(r"(\d{1,2})월(\d{1,2})일", value)
+    if not match:
+        return value
+    year = date.today().year
+    return f"{year}-{int(match.group(1)):02d}-{int(match.group(2)):02d}"
 
 
 def days_for_word(word: str) -> list[str]:

@@ -53,6 +53,14 @@ class AvailabilityType(StrEnum):
     PREFERRED_WORK = "PREFERRED_WORK"
 
 
+class LeaveTypeCode(StrEnum):
+    REGULAR = "REGULAR"
+    ANNUAL = "ANNUAL"
+    COMPENSATORY = "COMPENSATORY"
+    SPECIAL = "SPECIAL"
+    UNSPECIFIED = "UNSPECIFIED"
+
+
 class SetupSessionStatus(StrEnum):
     ACTIVE = "ACTIVE"
     COMPLETED = "COMPLETED"
@@ -172,6 +180,22 @@ class WorkRule(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class LeaveType(Base):
+    __tablename__ = "leave_types"
+    __table_args__ = (UniqueConstraint("team_id", "code", name="uq_leave_type_team_code"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(24))
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    requires_origin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allows_split: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class LeaveRequest(Base):
     __tablename__ = "leave_requests"
 
@@ -194,6 +218,11 @@ class Availability(Base):
     local_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     availability_type: Mapped[str] = mapped_column(String(32), nullable=False)
     shift_type_id: Mapped[int | None] = mapped_column(ForeignKey("shift_types.id"))
+    leave_type_id: Mapped[int | None] = mapped_column(ForeignKey("leave_types.id"))
+    comp_origin_assignment_id: Mapped[int | None] = mapped_column(ForeignKey("assignments.id"))
+    comp_origin_work_date: Mapped[date | None] = mapped_column(Date)
+    comp_amount_minutes: Mapped[int | None] = mapped_column(Integer)
+    comp_approval_status: Mapped[str | None] = mapped_column(String(24))
     reason_code: Mapped[str | None] = mapped_column(String(80))
     note: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(24), default="MANUAL", nullable=False)
@@ -238,6 +267,13 @@ class Assignment(Base):
     local_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     shift_type_id: Mapped[int | None] = mapped_column(ForeignKey("shift_types.id"))
+    leave_type_id: Mapped[int | None] = mapped_column(ForeignKey("leave_types.id"))
+    comp_origin_assignment_id: Mapped[int | None] = mapped_column(ForeignKey("assignments.id"))
+    comp_origin_work_date: Mapped[date | None] = mapped_column(Date)
+    comp_amount_minutes: Mapped[int | None] = mapped_column(Integer)
+    comp_approval_status: Mapped[str | None] = mapped_column(String(24))
+    comp_validation_status: Mapped[str | None] = mapped_column(String(24))
+    comp_validation_message: Mapped[str | None] = mapped_column(Text)
     locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     source: Mapped[str] = mapped_column(String(24), default=AssignmentSource.MANUAL, nullable=False)
     change_reason: Mapped[str | None] = mapped_column(Text)

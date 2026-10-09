@@ -8,7 +8,7 @@ from typing import TypeVar
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ ModelT = TypeVar("ModelT")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    run_lightweight_migrations()
     yield
 
 
@@ -68,6 +69,157 @@ def list_by_team(db: Session, model: type[ModelT], team_id: int) -> Sequence[Mod
     return db.scalars(select(model).where(model.team_id == team_id)).all()
 
 
+DEFAULT_LEAVE_TYPES = [
+    {"code": "REGULAR", "name": "정기휴무", "color": "#e5e7eb", "is_paid": True, "requires_origin": False, "allows_split": False, "sort_order": 10},
+    {"code": "ANNUAL", "name": "연차", "color": "#fed7aa", "is_paid": True, "requires_origin": False, "allows_split": False, "sort_order": 20},
+    {"code": "COMPENSATORY", "name": "대체휴무", "color": "#bfdbfe", "is_paid": True, "requires_origin": True, "allows_split": False, "sort_order": 30},
+    {"code": "SPECIAL", "name": "특별휴무", "color": "#ddd6fe", "is_paid": True, "requires_origin": False, "allows_split": False, "sort_order": 40},
+    {"code": "UNSPECIFIED", "name": "유형 미지정", "color": "#f3f4f6", "is_paid": True, "requires_origin": False, "allows_split": False, "sort_order": 999},
+]
+
+
+def run_lightweight_migrations() -> None:
+    if not settings.database_url.startswith("sqlite"):
+        return
+    with engine.begin() as connection:
+        table_names = set(inspect(connection).get_table_names())
+        if "assignments" in table_names:
+            columns = {column["name"] for column in inspect(connection).get_columns("assignments")}
+            for column_name, column_type in {
+                "leave_type_id": "INTEGER",
+                "comp_origin_assignment_id": "INTEGER",
+                "comp_origin_work_date": "DATE",
+                "comp_amount_minutes": "INTEGER",
+                "comp_approval_status": "VARCHAR(24)",
+                "comp_validation_status": "VARCHAR(24)",
+                "comp_validation_message": "TEXT",
+            }.items():
+                if column_name not in columns:
+                    connection.execute(text(f"ALTER TABLE assignments ADD COLUMN {column_name} {column_type}"))
+        if "availability" in table_names:
+            columns = {column["name"] for column in inspect(connection).get_columns("availability")}
+            for column_name, column_type in {
+                "leave_type_id": "INTEGER",
+                "comp_origin_assignment_id": "INTEGER",
+                "comp_origin_work_date": "DATE",
+                "comp_amount_minutes": "INTEGER",
+                "comp_approval_status": "VARCHAR(24)",
+            }.items():
+                if column_name not in columns:
+                    connection.execute(text(f"ALTER TABLE availability ADD COLUMN {column_name} {column_type}"))
+
+
+def ensure_default_leave_types(db: Session, team_id: int) -> None:
+    existing_codes = set(db.scalars(select(models.LeaveType.code).where(models.LeaveType.team_id == team_id)).all())
+    for item in DEFAULT_LEAVE_TYPES:
+        if item["code"] not in existing_codes:
+            db.add(models.LeaveType(team_id=team_id, **item))
+
+
+def leave_label(assignment: models.Assignment | None, leave_type: models.LeaveType | None) -> str | None:
+    if assignment is None or assignment.status == models.AssignmentStatus.WORK:
+        return None
+    if leave_type is None:
+        return "유형 미지정"
+    if leave_type.code == models.LeaveTypeCode.COMPENSATORY:
+        if assignment.comp_origin_work_date:
+            return f"대휴({assignment.comp_origin_work_date.month}/{assignment.comp_origin_work_date.day})"
+        return "대휴(발생일 필요)"
+    return leave_type.name
+
+
+def validate_leave_metadata(db: Session, team_id: int, employee_id: int, payload: object, assignment_id: int | None = None) -> models.LeaveType | None:
+    leave_type_id = getattr(payload, "leave_type_id", None)
+    status_value = getattr(payload, "status", None)
+    if status_value == models.AssignmentStatus.WORK and leave_type_id is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="work assignments cannot include leave_type_id")
+    if leave_type_id is None:
+        return None
+
+    leave_type = db.get(models.LeaveType, leave_type_id)
+    if leave_type is None or leave_type.team_id != team_id or not leave_type.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="leave type does not belong to team")
+
+    if leave_type.requires_origin:
+        origin_assignment_id = getattr(payload, "comp_origin_assignment_id", None)
+        origin_work_date = getattr(payload, "comp_origin_work_date", None)
+        if origin_assignment_id is None and origin_work_date is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="compensatory leave requires origin work date or assignment")
+        origin = db.get(models.Assignment, origin_assignment_id) if origin_assignment_id else None
+        if origin_assignment_id is not None:
+            if origin is None or origin.team_id != team_id or origin.employee_id != employee_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="origin assignment does not belong to employee")
+            if origin.status != models.AssignmentStatus.WORK:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="origin assignment must be a work assignment")
+            origin_work_date = origin.local_date
+        elif origin_work_date is not None:
+            origin = db.scalar(
+                select(models.Assignment).where(
+                    models.Assignment.team_id == team_id,
+                    models.Assignment.employee_id == employee_id,
+                    models.Assignment.local_date == origin_work_date,
+                    models.Assignment.status == models.AssignmentStatus.WORK,
+                )
+            )
+            if origin is None:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="origin work date has no work assignment")
+            origin_assignment_id = origin.id
+        if origin_work_date is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="compensatory leave requires origin work date")
+        amount = getattr(payload, "comp_amount_minutes", None) or 480
+        if origin_assignment_id is not None:
+            used_query = select(models.Assignment).where(
+                models.Assignment.team_id == team_id,
+                models.Assignment.employee_id == employee_id,
+                models.Assignment.leave_type_id == leave_type.id,
+                models.Assignment.comp_origin_assignment_id == origin_assignment_id,
+                models.Assignment.id != (assignment_id or -1),
+                models.Assignment.comp_approval_status != "REJECTED",
+            )
+            used_assignments = db.scalars(used_query).all()
+            if used_assignments and not leave_type.allows_split:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="origin work assignment already has compensatory leave")
+            if leave_type.allows_split:
+                origin_minutes = 480
+                if origin and origin.shift_type_id:
+                    shift = db.get(models.ShiftType, origin.shift_type_id)
+                    origin_minutes = shift.paid_minutes if shift and shift.paid_minutes else 480
+                used_minutes = sum(item.comp_amount_minutes or 480 for item in used_assignments)
+                if used_minutes + amount > origin_minutes:
+                    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="compensatory leave exceeds remaining origin time")
+    return leave_type
+
+
+def find_origin_assignment(db: Session, team_id: int, employee_id: int, origin_work_date: date | None) -> models.Assignment | None:
+    if origin_work_date is None:
+        return None
+    return db.scalar(
+        select(models.Assignment).where(
+            models.Assignment.team_id == team_id,
+            models.Assignment.employee_id == employee_id,
+            models.Assignment.local_date == origin_work_date,
+            models.Assignment.status == models.AssignmentStatus.WORK,
+        )
+    )
+
+
+def refresh_comp_validation(db: Session, assignment: models.Assignment, leave_type: models.LeaveType | None) -> None:
+    assignment.comp_validation_status = None
+    assignment.comp_validation_message = None
+    if not leave_type or not leave_type.requires_origin:
+        return
+    if assignment.comp_origin_assignment_id is None:
+        assignment.comp_validation_status = "WARN"
+        assignment.comp_validation_message = "대체휴무 발생 근무 배정이 연결되지 않았습니다."
+        return
+    origin = db.get(models.Assignment, assignment.comp_origin_assignment_id)
+    if origin is None or origin.status != models.AssignmentStatus.WORK or origin.employee_id != assignment.employee_id:
+        assignment.comp_validation_status = "WARN"
+        assignment.comp_validation_message = "대체휴무 발생 근무가 수정 또는 취소되었습니다."
+        return
+    assignment.comp_validation_status = "OK"
+
+
 @app.get("/api/health", response_model=schemas.HealthResponse)
 def health() -> schemas.HealthResponse:
     return schemas.HealthResponse(status="ok", service="workscheduler-backend")
@@ -85,6 +237,8 @@ def list_agents() -> list[dict[str, object]]:
 def create_team(payload: schemas.TeamCreate, db: Session = Depends(get_db)) -> models.Team:
     team = models.Team(name=payload.name, timezone=payload.timezone)
     db.add(team)
+    db.flush()
+    ensure_default_leave_types(db, team.id)
     commit_or_409(db)
     db.refresh(team)
     return team
@@ -97,7 +251,10 @@ def list_teams(db: Session = Depends(get_db)) -> Sequence[models.Team]:
 
 @app.get("/api/teams/{team_id}", response_model=schemas.TeamRead)
 def get_team(team_id: int, db: Session = Depends(get_db)) -> models.Team:
-    return ensure_team(db, team_id)
+    team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
+    return team
 
 
 @app.patch("/api/teams/{team_id}", response_model=schemas.TeamRead)
@@ -201,6 +358,24 @@ def list_work_rules(team_id: int, db: Session = Depends(get_db)) -> Sequence[mod
     return list_by_team(db, models.WorkRule, team_id)
 
 
+@app.post("/api/teams/{team_id}/leave-types", response_model=schemas.LeaveTypeRead, status_code=status.HTTP_201_CREATED)
+def create_leave_type(team_id: int, payload: schemas.LeaveTypeCreate, db: Session = Depends(get_db)) -> models.LeaveType:
+    ensure_team(db, team_id)
+    leave_type = models.LeaveType(team_id=team_id, **payload.model_dump())
+    db.add(leave_type)
+    commit_or_409(db)
+    db.refresh(leave_type)
+    return leave_type
+
+
+@app.get("/api/teams/{team_id}/leave-types", response_model=list[schemas.LeaveTypeRead])
+def list_leave_types(team_id: int, db: Session = Depends(get_db)) -> Sequence[models.LeaveType]:
+    ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
+    return db.scalars(select(models.LeaveType).where(models.LeaveType.team_id == team_id, models.LeaveType.is_active.is_(True)).order_by(models.LeaveType.sort_order, models.LeaveType.name)).all()
+
+
 @app.post("/api/teams/{team_id}/employee-contracts", response_model=schemas.EmployeeContractRead, status_code=status.HTTP_201_CREATED)
 def create_employee_contract(
     team_id: int,
@@ -269,6 +444,7 @@ def create_availability(team_id: int, payload: schemas.AvailabilityCreate, db: S
     employee = db.get(models.Employee, payload.employee_id)
     if employee is None or employee.team_id != team_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="employee does not belong to team")
+    validate_leave_metadata(db, team_id, payload.employee_id, payload)
     availability = models.Availability(team_id=team_id, **payload.model_dump())
     db.add(availability)
     commit_or_409(db)
@@ -291,7 +467,17 @@ def create_assignment(team_id: int, payload: schemas.AssignmentCreate, db: Sessi
         shift_type = db.get(models.ShiftType, payload.shift_type_id)
         if shift_type is None or shift_type.team_id != team_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shift type does not belong to team")
+    leave_type = validate_leave_metadata(db, team_id, payload.employee_id, payload)
     assignment = models.Assignment(team_id=team_id, **payload.model_dump())
+    if leave_type and leave_type.requires_origin and assignment.comp_origin_assignment_id:
+        origin = db.get(models.Assignment, assignment.comp_origin_assignment_id)
+        if origin is not None:
+            assignment.comp_origin_work_date = origin.local_date
+    elif leave_type and leave_type.requires_origin:
+        origin = find_origin_assignment(db, team_id, payload.employee_id, assignment.comp_origin_work_date)
+        if origin is not None:
+            assignment.comp_origin_assignment_id = origin.id
+    refresh_comp_validation(db, assignment, leave_type)
     db.add(assignment)
     commit_or_409(db)
     db.refresh(assignment)
@@ -382,6 +568,8 @@ def build_monthly_schedule_read(
     employees = db.scalars(select(models.Employee).where(models.Employee.team_id == schedule.team_id, models.Employee.is_active.is_(True))).all()
     shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == schedule.team_id)).all()
     shift_by_id = {shift.id: shift for shift in shift_types}
+    leave_types = db.scalars(select(models.LeaveType).where(models.LeaveType.team_id == schedule.team_id)).all()
+    leave_by_id = {leave_type.id: leave_type for leave_type in leave_types}
     assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
     assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
     days: list[schemas.CalendarDay] = []
@@ -391,7 +579,9 @@ def build_monthly_schedule_read(
         for employee in employees:
             item = assignment_by_key.get((employee.id, local_date))
             shift = shift_by_id.get(item.shift_type_id) if item and item.shift_type_id else None
+            leave_type = leave_by_id.get(item.leave_type_id) if item and item.leave_type_id else None
             day_items.append(schemas.CalendarAssignment(
+                assignment_id=item.id if item else None,
                 employee_id=employee.id,
                 employee_name=employee.display_name,
                 status=item.status if item else models.AssignmentStatus.OFF,
@@ -402,10 +592,23 @@ def build_monthly_schedule_read(
                 end_time=shift.end_time if shift else None,
                 ends_next_day=shift.ends_next_day if shift else False,
                 color=shift.color if shift else None,
+                leave_type_id=leave_type.id if leave_type else None,
+                leave_type_code=leave_type.code if leave_type else None,
+                leave_type_name=leave_type.name if leave_type else None,
+                leave_label=leave_label(item, leave_type),
+                comp_origin_assignment_id=item.comp_origin_assignment_id if item else None,
+                comp_origin_work_date=item.comp_origin_work_date if item else None,
+                comp_amount_minutes=item.comp_amount_minutes if item else None,
+                comp_approval_status=item.comp_approval_status if item else None,
+                comp_validation_status=item.comp_validation_status if item else None,
+                comp_validation_message=item.comp_validation_message if item else None,
             ))
         groups: dict[str, list[schemas.CalendarAssignment]] = {}
         for item in day_items:
-            groups.setdefault(item.category or item.status, []).append(item)
+            group_key = item.category or item.status
+            if item.status != models.AssignmentStatus.WORK:
+                group_key = item.leave_type_code or group_key
+            groups.setdefault(group_key, []).append(item)
         days.append(schemas.CalendarDay(local_date=local_date, groups=groups, assignments=day_items))
     return schemas.MonthlyScheduleRead(
         schedule_id=schedule.id,
@@ -428,6 +631,8 @@ def validate_schedule_version(
     employees = db.scalars(select(models.Employee).where(models.Employee.team_id == schedule.team_id, models.Employee.is_active.is_(True))).all()
     shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == schedule.team_id)).all()
     shift_by_id = {shift.id: shift for shift in shift_types}
+    leave_types = db.scalars(select(models.LeaveType).where(models.LeaveType.team_id == schedule.team_id)).all()
+    leave_by_id = {leave_type.id: leave_type for leave_type in leave_types}
     assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
     assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
     dates = [date(schedule.year, schedule.month, day) for day in range(1, monthrange(schedule.year, schedule.month)[1] + 1)]
@@ -444,6 +649,13 @@ def validate_schedule_version(
                 issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="OFF_WITH_SHIFT", message="비근무 상태에는 근무유형을 지정할 수 없습니다.", local_date=local_date, employee_id=employee.id, shift_type_id=item.shift_type_id))
             if item.shift_type_id is not None and item.shift_type_id not in shift_by_id:
                 issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="UNKNOWN_SHIFT", message="팀에 속하지 않는 근무유형입니다.", local_date=local_date, employee_id=employee.id, shift_type_id=item.shift_type_id))
+            if item.leave_type_id is not None and item.leave_type_id not in leave_by_id:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="UNKNOWN_LEAVE_TYPE", message="팀에 속하지 않는 휴무유형입니다.", local_date=local_date, employee_id=employee.id))
+            leave_type = leave_by_id.get(item.leave_type_id) if item.leave_type_id else None
+            if leave_type and leave_type.requires_origin:
+                refresh_comp_validation(db, item, leave_type)
+                if item.comp_validation_status == "WARN":
+                    issues.append(schemas.ScheduleValidationIssue(severity="WARN", code="COMP_ORIGIN_RECHECK", message=item.comp_validation_message or "대체휴무 발생 근무를 재확인해야 합니다.", local_date=local_date, employee_id=employee.id))
 
     weekday_map = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}
     requirements = db.scalars(select(models.CoverageRequirement).where(models.CoverageRequirement.team_id == schedule.team_id, models.CoverageRequirement.is_active.is_(True))).all()
@@ -488,6 +700,13 @@ def clone_schedule_version(db: Session, schedule: models.Schedule, source_versio
             local_date=item.local_date,
             status=item.status,
             shift_type_id=item.shift_type_id,
+            leave_type_id=item.leave_type_id,
+            comp_origin_assignment_id=item.comp_origin_assignment_id,
+            comp_origin_work_date=item.comp_origin_work_date,
+            comp_amount_minutes=item.comp_amount_minutes,
+            comp_approval_status=item.comp_approval_status,
+            comp_validation_status=item.comp_validation_status,
+            comp_validation_message=item.comp_validation_message,
             locked=False,
             source=models.AssignmentSource.REVISION,
             change_reason=f"cloned from version {source_version.version_no}",
@@ -629,6 +848,7 @@ def update_schedule_assignment(
         shift_type = db.get(models.ShiftType, payload.shift_type_id)
         if shift_type is None or shift_type.team_id != team_id or not shift_type.is_active:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shift type does not belong to team")
+    leave_type = validate_leave_metadata(db, team_id, payload.employee_id, payload)
 
     assignment = db.scalar(
         select(models.Assignment).where(
@@ -642,6 +862,29 @@ def update_schedule_assignment(
         db.add(assignment)
     assignment.status = payload.status
     assignment.shift_type_id = payload.shift_type_id
+    assignment.leave_type_id = payload.leave_type_id
+    assignment.comp_origin_assignment_id = payload.comp_origin_assignment_id
+    assignment.comp_origin_work_date = payload.comp_origin_work_date
+    assignment.comp_amount_minutes = payload.comp_amount_minutes
+    assignment.comp_approval_status = payload.comp_approval_status
+    if leave_type and leave_type.requires_origin and assignment.comp_origin_assignment_id:
+        origin = db.get(models.Assignment, assignment.comp_origin_assignment_id)
+        if origin is not None:
+            assignment.comp_origin_work_date = origin.local_date
+    elif leave_type and leave_type.requires_origin:
+        origin = find_origin_assignment(db, team_id, payload.employee_id, assignment.comp_origin_work_date)
+        if origin is not None:
+            assignment.comp_origin_assignment_id = origin.id
+    if payload.status == models.AssignmentStatus.WORK:
+        assignment.leave_type_id = None
+        assignment.comp_origin_assignment_id = None
+        assignment.comp_origin_work_date = None
+        assignment.comp_amount_minutes = None
+        assignment.comp_approval_status = None
+        assignment.comp_validation_status = None
+        assignment.comp_validation_message = None
+    else:
+        refresh_comp_validation(db, assignment, leave_type)
     assignment.locked = payload.locked
     assignment.source = models.AssignmentSource.MANUAL
     assignment.change_reason = payload.change_reason
@@ -675,12 +918,16 @@ def export_monthly_schedule(team_id: int, year: int, month: int, db: Session = D
 @app.get("/api/teams/{team_id}/setup-summary", response_model=schemas.SetupSummary)
 def get_setup_summary(team_id: int, db: Session = Depends(get_db)) -> schemas.SetupSummary:
     team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
     return analyze_setup(db, team)
 
 
 @app.post("/api/teams/{team_id}/setup-sessions", response_model=schemas.SetupSessionRead, status_code=status.HTTP_201_CREATED)
 def create_setup_session(team_id: int, db: Session = Depends(get_db)) -> schemas.SetupSessionRead:
     team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
     summary = analyze_setup(db, team)
     session = models.SetupSession(
         team_id=team_id,
@@ -697,6 +944,8 @@ def create_setup_session(team_id: int, db: Session = Depends(get_db)) -> schemas
 @app.get("/api/teams/{team_id}/setup-sessions/active", response_model=schemas.SetupSessionRead)
 def get_active_setup_session(team_id: int, db: Session = Depends(get_db)) -> schemas.SetupSessionRead:
     team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
     session = db.scalars(
         select(models.SetupSession)
         .where(models.SetupSession.team_id == team_id, models.SetupSession.status == models.SetupSessionStatus.ACTIVE)
@@ -724,6 +973,8 @@ def answer_setup_chat(
     db: Session = Depends(get_db),
 ) -> schemas.SetupChatResponse:
     team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
     session = get_session_or_404(db, team_id, session_id)
     rows = get_team_rows(db, team_id)
     patch = parse_setup_message(payload.message, team, rows)
@@ -748,6 +999,8 @@ def answer_setup_chat(
 @app.post("/api/teams/{team_id}/setup-sessions/{session_id}/approve", response_model=schemas.SetupApproveResponse)
 def approve_setup_patch(team_id: int, session_id: int, db: Session = Depends(get_db)) -> schemas.SetupApproveResponse:
     team = ensure_team(db, team_id)
+    ensure_default_leave_types(db, team_id)
+    commit_or_409(db)
     session = get_session_or_404(db, team_id, session_id)
     patch = loads(session.pending_patch_json, {})
     if empty_patch(patch):
@@ -808,6 +1061,9 @@ def validate_patch(patch: dict[str, object]) -> list[str]:
             continue
         if item.get("max_count") is not None and item["max_count"] < item["target_count"]:
             warnings.append("필요 인원의 최대값이 목표값보다 작습니다.")
+    for item in patch.get("availability", []):
+        if isinstance(item, dict) and item.get("requires_origin"):
+            warnings.append("대체휴무는 발생 근무일을 함께 입력해야 합니다.")
     return warnings
 
 
@@ -845,4 +1101,8 @@ def apply_patch_to_db(db: Session, team: models.Team, patch: dict[str, object]) 
 
     for item in patch.get("availability", []):
         if isinstance(item, dict):
-            db.add(models.Availability(team_id=team.id, **item))
+            clean = {key: value for key, value in item.items() if key != "requires_origin"}
+            for key in ["local_date", "comp_origin_work_date"]:
+                if isinstance(clean.get(key), str):
+                    clean[key] = date.fromisoformat(clean[key])
+            db.add(models.Availability(team_id=team.id, **clean))
