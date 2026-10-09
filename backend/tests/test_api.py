@@ -198,9 +198,11 @@ def test_conflicting_coverage_validation_and_bad_llm_json() -> None:
 
 def test_generation_pipeline_persists_monthly_calendar(monkeypatch) -> None:
     from app import generation
+    from app import main
     from app.agent_runner import AgentResult
 
     monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
 
     def fake_agent(agent_id, constraint_input, timeout_seconds, cancel_event=None):
         return AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id])
@@ -234,3 +236,53 @@ def test_generation_pipeline_persists_monthly_calendar(monkeypatch) -> None:
     days = calendar.json()["days"]
     assert len(days) == 30
     assert all(len(day["assignments"]) == 1 for day in days)
+
+
+def test_manual_calendar_edit_and_validation(monkeypatch) -> None:
+    from app import generation
+    from app import main
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
+
+    def fake_agent(agent_id, constraint_input, timeout_seconds, cancel_event=None):
+        return AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id])
+
+    monkeypatch.setattr(generation, "run_agent", fake_agent)
+    team = client.post("/api/teams", json={"name": "수동수정 테스트"}).json()
+    employee = client.post(
+        f"/api/teams/{team['id']}/employees",
+        json={"employee_no": "EMP-EDIT", "display_name": "수정 직원"},
+    ).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "EDIT-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00"},
+    ).json()
+    assert client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "평일 주간", "shift_type_id": shift["id"], "days_of_week_json": "[\"MON\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    ).status_code == 201
+
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 11, "agent_id": "codex", "timeout_seconds": 5})
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+
+    update = client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-02", "status": "OFF", "shift_type_id": None},
+    )
+    assert update.status_code == 200
+    edited_day = next(day for day in update.json()["days"] if day["local_date"] == "2026-11-02")
+    assert edited_day["assignments"][0]["status"] == "OFF"
+
+    validation = client.get(f"/api/teams/{team['id']}/schedules/2026/11/validation")
+    assert validation.status_code == 200
+    body = validation.json()
+    assert body["ok"] is False
+    assert any(issue["code"] == "COVERAGE_BELOW_MIN" for issue in body["issues"])

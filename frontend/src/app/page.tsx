@@ -17,9 +17,13 @@ import {
   getSetupSummary,
   listTeams,
   sendSetupMessage,
+  updateScheduleAssignment,
+  validateMonthlySchedule,
   type GenerationRun,
   type CalendarAssignment,
+  type CalendarDay,
   type MonthlySchedule,
+  type ScheduleValidation,
   type SetupSession,
   type SetupSummary,
   type ShiftType,
@@ -49,6 +53,8 @@ export default function Home() {
   const [ruleForm, setRuleForm] = useState({ minRestHours: "11", maxConsecutive: "5", nightOff: true });
   const [generation, setGeneration] = useState<GenerationRun | null>(null);
   const [calendar, setCalendar] = useState<MonthlySchedule | null>(null);
+  const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
+  const [validation, setValidation] = useState<ScheduleValidation | null>(null);
   const [generationMonth, setGenerationMonth] = useState({ year: 2026, month: 11 });
   const [agentId, setAgentId] = useState<"codex" | "claude">("codex");
 
@@ -182,6 +188,8 @@ export default function Home() {
     if (!selectedTeamId) return;
     setError(null);
     setCalendar(null);
+    setSelectedDay(null);
+    setValidation(null);
     try {
       let next = await generateSchedule(selectedTeamId, { ...generationMonth, agent_id: agentId, timeout_seconds: 120 });
       setGeneration(next);
@@ -191,7 +199,9 @@ export default function Home() {
         setGeneration(next);
       }
       if (next.status === "SUCCEEDED") {
-        setCalendar(await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
+        const nextCalendar = await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month);
+        setCalendar(nextCalendar);
+        setValidation(await validateMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
       } else if (next.status === "INFEASIBLE") {
         const conflicts = Array.isArray(next.result?.conflicts) ? next.result.conflicts.join(" ") : "Hard constraint 충돌을 확인하세요.";
         setError(`근무표를 생성하지 못했습니다. ${conflicts}`);
@@ -204,10 +214,40 @@ export default function Home() {
     }
   }
 
+  async function handleLoadSchedule() {
+    if (!selectedTeamId) return;
+    setError(null);
+    setSelectedDay(null);
+    try {
+      const nextCalendar = await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month);
+      setCalendar(nextCalendar);
+      setValidation(await validateMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
+    } catch {
+      setError("저장된 근무표를 찾을 수 없습니다.");
+    }
+  }
+
   async function handleCancelGeneration() {
     if (!selectedTeamId || !generation) return;
     const next = await cancelGeneration(selectedTeamId, generation.id);
     setGeneration(next);
+  }
+
+  async function handleAssignmentChange(assignment: CalendarAssignment, value: string) {
+    if (!selectedTeamId || !calendar || !selectedDay) return;
+    const isOff = value === "OFF" || value === "LEAVE" || value === "OTHER";
+    const status = isOff ? value : "WORK";
+    const shiftTypeId = isOff ? null : Number(value);
+    const nextCalendar = await updateScheduleAssignment(selectedTeamId, calendar.year, calendar.month, {
+      employee_id: assignment.employee_id,
+      local_date: selectedDay.local_date,
+      status: status as "WORK" | "OFF" | "LEAVE" | "OTHER",
+      shift_type_id: shiftTypeId,
+      change_reason: "calendar manual edit"
+    });
+    setCalendar(nextCalendar);
+    setSelectedDay(nextCalendar.days.find((day) => day.local_date === selectedDay.local_date) ?? null);
+    setValidation(await validateMonthlySchedule(selectedTeamId, calendar.year, calendar.month));
   }
 
   const shiftTypes: ShiftType[] = summary?.shift_types ?? [];
@@ -363,20 +403,33 @@ export default function Home() {
               <label className="text-xs text-slate-500">월<input type="number" min="1" max="12" className="mt-1 block w-16 rounded border border-slate-300 px-2 py-2 text-sm text-slate-950" value={generationMonth.month} onChange={(event) => setGenerationMonth({ ...generationMonth, month: Number(event.target.value) })} /></label>
               <label className="text-xs text-slate-500">에이전트<select className="mt-1 block rounded border border-slate-300 px-2 py-2 text-sm text-slate-950" value={agentId} onChange={(event) => setAgentId(event.target.value as "codex" | "claude")}><option value="codex">Codex CLI</option><option value="claude">Claude Code</option></select></label>
               <button className="rounded bg-emerald-700 px-3 py-2 text-sm font-semibold text-white">근무표 생성</button>
+              <button type="button" onClick={handleLoadSchedule} className="rounded border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700">불러오기</button>
               {generation && ["QUEUED", "RUNNING", "SOLVING"].includes(generation.status) ? <button type="button" onClick={handleCancelGeneration} className="rounded border border-red-300 px-3 py-2 text-sm font-semibold text-red-700">취소</button> : null}
             </form>
           </div>
           {generation ? <p className="mt-3 text-sm text-slate-600">실행 #{generation.id} · {generation.status} · {generation.error_message ?? ""}</p> : null}
-          {calendar ? <MonthlyCalendar calendar={calendar} /> : null}
+          {validation ? (
+            <div className={`mt-3 rounded border p-3 text-sm ${validation.ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              검증 {validation.ok ? "통과" : "확인 필요"} · 이슈 {validation.issue_count}건
+              {validation.issues.length > 0 ? <span className="ml-2">{validation.issues.slice(0, 2).map((issue) => issue.message).join(" / ")}</span> : null}
+            </div>
+          ) : null}
+          {calendar ? (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <MonthlyCalendar calendar={calendar} selectedDate={selectedDay?.local_date ?? null} onSelectDay={setSelectedDay} />
+              <DayDetailPanel day={selectedDay} shiftTypes={shiftTypes} onChangeAssignment={handleAssignmentChange} />
+            </div>
+          ) : null}
         </section>
       </div>
     </main>
   );
 }
 
-function MonthlyCalendar({ calendar }: { calendar: MonthlySchedule }) {
+function MonthlyCalendar({ calendar, selectedDate, onSelectDay }: { calendar: MonthlySchedule; selectedDate: string | null; onSelectDay: (day: CalendarDay) => void }) {
   const firstDay = new Date(calendar.year, calendar.month - 1, 1).getDay();
   const cells = [...Array(firstDay).fill(null), ...calendar.days];
+  const groupOrder = ["DAY", "EARLY_DAY", "NIGHT", "EARLY_NIGHT", "OTHER", "LEAVE", "OFF"];
   return (
     <div className="mt-5 overflow-x-auto rounded border border-slate-200">
       <div className="min-w-[980px]">
@@ -385,22 +438,81 @@ function MonthlyCalendar({ calendar }: { calendar: MonthlySchedule }) {
         </div>
         <div className="grid grid-cols-7">
           {cells.map((day, index) => day ? (
-            <div key={day.local_date} className="min-h-44 border-b border-r border-slate-200 p-2 align-top">
-              <div className="text-xs font-semibold text-slate-500">{day.local_date.slice(8, 10)}일</div>
+            <button key={day.local_date} type="button" onClick={() => onSelectDay(day)} className={`min-h-44 border-b border-r border-slate-200 p-2 text-left align-top transition ${selectedDate === day.local_date ? "bg-emerald-50 ring-2 ring-inset ring-emerald-500" : "bg-white hover:bg-slate-50"}`}>
+              <div className="text-xs font-semibold text-slate-500">{day.local_date.slice(8, 10)}일 · {day.assignments.length}명</div>
               <div className="mt-2 max-h-36 space-y-2 overflow-y-auto">
-                {(Object.entries(day.groups) as [string, CalendarAssignment[]][]).map(([group, assignments]) => (
+                {(Object.entries(day.groups) as [string, CalendarAssignment[]][]).sort(([left], [right]) => groupOrder.indexOf(left) - groupOrder.indexOf(right)).map(([group, assignments]) => (
                   <div key={group}>
-                    <div className="text-[11px] font-semibold text-slate-500">{group} ({assignments.length})</div>
+                    <div className="text-[11px] font-semibold text-slate-500">{groupLabel(group)} ({assignments.length})</div>
                     <div className="text-xs leading-5 text-slate-800">{assignments.map((assignment) => assignment.employee_name).join(", ")}</div>
                   </div>
                 ))}
               </div>
-            </div>
+            </button>
           ) : <div key={`blank-${index}`} className="min-h-44 border-b border-r border-slate-200 bg-slate-50" />)}
         </div>
       </div>
     </div>
   );
+}
+
+function DayDetailPanel({ day, shiftTypes, onChangeAssignment }: { day: CalendarDay | null; shiftTypes: ShiftType[]; onChangeAssignment: (assignment: CalendarAssignment, value: string) => void }) {
+  if (!day) {
+    return (
+      <aside className="mt-5 rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        날짜를 선택하면 직원별 배정을 확인하고 수정할 수 있습니다.
+      </aside>
+    );
+  }
+  return (
+    <aside className="mt-5 rounded border border-slate-200 bg-white p-4">
+      <div className="border-b border-slate-200 pb-3">
+        <h3 className="text-base font-semibold">{day.local_date}</h3>
+        <p className="mt-1 text-sm text-slate-500">변경 즉시 저장되고 월간표 검증이 다시 실행됩니다.</p>
+      </div>
+      <div className="mt-3 max-h-[520px] space-y-2 overflow-y-auto">
+        {day.assignments.map((assignment) => (
+          <div key={assignment.employee_id} className="grid grid-cols-[minmax(84px,1fr)_minmax(140px,1.3fr)] items-center gap-2 rounded border border-slate-200 p-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold">{assignment.employee_name}</div>
+              <div className="text-xs text-slate-500">{assignment.shift_type_name ?? statusLabel(assignment.status)}</div>
+            </div>
+            <select className="min-w-0 rounded border border-slate-300 px-2 py-2 text-sm" value={assignment.status === "WORK" && assignment.shift_type_id ? String(assignment.shift_type_id) : assignment.status} onChange={(event) => onChangeAssignment(assignment, event.target.value)}>
+              <option value="OFF">휴무</option>
+              <option value="LEAVE">연차</option>
+              <option value="OTHER">기타</option>
+              {shiftTypes.filter((shift) => shift.is_work).map((shift) => (
+                <option key={shift.id} value={shift.id}>{shift.name}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function groupLabel(value: string) {
+  const labels: Record<string, string> = {
+    DAY: "주간",
+    EARLY_DAY: "조기",
+    NIGHT: "야간",
+    EARLY_NIGHT: "야간 조기",
+    OFF: "휴무",
+    LEAVE: "연차",
+    OTHER: "기타"
+  };
+  return labels[value] ?? value;
+}
+
+function statusLabel(value: string) {
+  const labels: Record<string, string> = {
+    WORK: "근무",
+    OFF: "휴무",
+    LEAVE: "연차",
+    OTHER: "기타"
+  };
+  return labels[value] ?? value;
 }
 
 function Metric({ label, value }: { label: string; value: number }) {

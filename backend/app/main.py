@@ -321,6 +321,113 @@ def read_generation_run(run: models.AgentRun) -> schemas.GenerationRunRead:
     )
 
 
+def get_active_schedule_version(
+    db: Session,
+    team_id: int,
+    year: int,
+    month: int,
+) -> tuple[models.Schedule, models.ScheduleVersion]:
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must be between 1 and 12")
+    schedule = db.scalar(select(models.Schedule).where(models.Schedule.team_id == team_id, models.Schedule.year == year, models.Schedule.month == month))
+    if schedule is None or schedule.active_version_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule not found")
+    version = db.get(models.ScheduleVersion, schedule.active_version_id)
+    if version is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule version not found")
+    return schedule, version
+
+
+def build_monthly_schedule_read(
+    db: Session,
+    schedule: models.Schedule,
+    version: models.ScheduleVersion,
+) -> schemas.MonthlyScheduleRead:
+    employees = db.scalars(select(models.Employee).where(models.Employee.team_id == schedule.team_id, models.Employee.is_active.is_(True))).all()
+    shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == schedule.team_id)).all()
+    shift_by_id = {shift.id: shift for shift in shift_types}
+    assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
+    assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
+    days: list[schemas.CalendarDay] = []
+    for day in range(1, monthrange(schedule.year, schedule.month)[1] + 1):
+        local_date = date(schedule.year, schedule.month, day)
+        day_items: list[schemas.CalendarAssignment] = []
+        for employee in employees:
+            item = assignment_by_key.get((employee.id, local_date))
+            shift = shift_by_id.get(item.shift_type_id) if item and item.shift_type_id else None
+            day_items.append(schemas.CalendarAssignment(
+                employee_id=employee.id,
+                employee_name=employee.display_name,
+                status=item.status if item else models.AssignmentStatus.OFF,
+                shift_type_id=shift.id if shift else None,
+                shift_type_name=shift.name if shift else None,
+                category=shift.category if shift else models.AssignmentStatus.OFF,
+                start_time=shift.start_time if shift else None,
+                end_time=shift.end_time if shift else None,
+                ends_next_day=shift.ends_next_day if shift else False,
+                color=shift.color if shift else None,
+            ))
+        groups: dict[str, list[schemas.CalendarAssignment]] = {}
+        for item in day_items:
+            groups.setdefault(item.category or item.status, []).append(item)
+        days.append(schemas.CalendarDay(local_date=local_date, groups=groups, assignments=day_items))
+    return schemas.MonthlyScheduleRead(
+        schedule_id=schedule.id,
+        version_id=version.id,
+        version_no=version.version_no,
+        year=schedule.year,
+        month=schedule.month,
+        status=version.status,
+        solver_status=version.solver_status,
+        days=days,
+    )
+
+
+def validate_schedule_version(
+    db: Session,
+    schedule: models.Schedule,
+    version: models.ScheduleVersion,
+) -> schemas.ScheduleValidationRead:
+    issues: list[schemas.ScheduleValidationIssue] = []
+    employees = db.scalars(select(models.Employee).where(models.Employee.team_id == schedule.team_id, models.Employee.is_active.is_(True))).all()
+    shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == schedule.team_id)).all()
+    shift_by_id = {shift.id: shift for shift in shift_types}
+    assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
+    assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
+    dates = [date(schedule.year, schedule.month, day) for day in range(1, monthrange(schedule.year, schedule.month)[1] + 1)]
+
+    for local_date in dates:
+        for employee in employees:
+            item = assignment_by_key.get((employee.id, local_date))
+            if item is None:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="MISSING_ASSIGNMENT", message="직원의 일자별 배정이 없습니다.", local_date=local_date, employee_id=employee.id))
+                continue
+            if item.status == models.AssignmentStatus.WORK and item.shift_type_id is None:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="WORK_WITHOUT_SHIFT", message="근무 상태에는 근무유형이 필요합니다.", local_date=local_date, employee_id=employee.id))
+            if item.status != models.AssignmentStatus.WORK and item.shift_type_id is not None:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="OFF_WITH_SHIFT", message="비근무 상태에는 근무유형을 지정할 수 없습니다.", local_date=local_date, employee_id=employee.id, shift_type_id=item.shift_type_id))
+            if item.shift_type_id is not None and item.shift_type_id not in shift_by_id:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="UNKNOWN_SHIFT", message="팀에 속하지 않는 근무유형입니다.", local_date=local_date, employee_id=employee.id, shift_type_id=item.shift_type_id))
+
+    weekday_map = {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}
+    requirements = db.scalars(select(models.CoverageRequirement).where(models.CoverageRequirement.team_id == schedule.team_id, models.CoverageRequirement.is_active.is_(True))).all()
+    for requirement in requirements:
+        days_of_week = loads(requirement.days_of_week_json, [])
+        day_numbers = {weekday_map[item.upper()] for item in days_of_week if isinstance(item, str) and item.upper() in weekday_map}
+        for local_date in dates:
+            if local_date.weekday() not in day_numbers:
+                continue
+            count = sum(1 for item in assignments if item.local_date == local_date and item.status == models.AssignmentStatus.WORK and item.shift_type_id == requirement.shift_type_id)
+            if count < requirement.min_count:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="COVERAGE_BELOW_MIN", message=f"필요 인원 최소값 {requirement.min_count}명보다 적습니다.", local_date=local_date, shift_type_id=requirement.shift_type_id))
+            if requirement.max_count is not None and count > requirement.max_count:
+                issues.append(schemas.ScheduleValidationIssue(severity="ERROR", code="COVERAGE_ABOVE_MAX", message=f"필요 인원 최대값 {requirement.max_count}명을 초과했습니다.", local_date=local_date, shift_type_id=requirement.shift_type_id))
+            if count != requirement.target_count:
+                issues.append(schemas.ScheduleValidationIssue(severity="WARN", code="COVERAGE_TARGET_MISMATCH", message=f"목표 인원 {requirement.target_count}명과 다릅니다.", local_date=local_date, shift_type_id=requirement.shift_type_id))
+    error_count = sum(1 for issue in issues if issue.severity == "ERROR")
+    return schemas.ScheduleValidationRead(ok=error_count == 0, issue_count=len(issues), issues=issues)
+
+
 @app.post("/api/teams/{team_id}/schedules/generate", response_model=schemas.GenerationRunRead, status_code=status.HTTP_202_ACCEPTED)
 def start_schedule_generation(
     team_id: int,
@@ -369,45 +476,58 @@ def stop_generation(team_id: int, run_id: int, db: Session = Depends(get_db)) ->
 
 @app.get("/api/teams/{team_id}/schedules/{year}/{month}", response_model=schemas.MonthlyScheduleRead)
 def get_monthly_schedule(team_id: int, year: int, month: int, db: Session = Depends(get_db)) -> schemas.MonthlyScheduleRead:
-    team = ensure_team(db, team_id)
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must be between 1 and 12")
-    schedule = db.scalar(select(models.Schedule).where(models.Schedule.team_id == team_id, models.Schedule.year == year, models.Schedule.month == month))
-    if schedule is None or schedule.active_version_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule not found")
-    version = db.get(models.ScheduleVersion, schedule.active_version_id)
-    if version is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule version not found")
-    employees = db.scalars(select(models.Employee).where(models.Employee.team_id == team_id, models.Employee.is_active.is_(True))).all()
-    employee_by_id = {employee.id: employee for employee in employees}
-    shift_types = db.scalars(select(models.ShiftType).where(models.ShiftType.team_id == team_id)).all()
-    shift_by_id = {shift.id: shift for shift in shift_types}
-    assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == version.id)).all()
-    assignment_by_key = {(item.employee_id, item.local_date): item for item in assignments}
-    days: list[schemas.CalendarDay] = []
-    for day in range(1, monthrange(year, month)[1] + 1):
-        local_date = date(year, month, day)
-        day_items: list[schemas.CalendarAssignment] = []
-        for employee in employees:
-            item = assignment_by_key.get((employee.id, local_date))
-            shift = shift_by_id.get(item.shift_type_id) if item and item.shift_type_id else None
-            day_items.append(schemas.CalendarAssignment(
-                employee_id=employee.id,
-                employee_name=employee.display_name,
-                status=item.status if item else "OFF",
-                shift_type_id=shift.id if shift else None,
-                shift_type_name=shift.name if shift else None,
-                category=shift.category if shift else "OFF",
-                start_time=shift.start_time if shift else None,
-                end_time=shift.end_time if shift else None,
-                ends_next_day=shift.ends_next_day if shift else False,
-                color=shift.color if shift else None,
-            ))
-        groups: dict[str, list[schemas.CalendarAssignment]] = {}
-        for item in day_items:
-            groups.setdefault(item.category or item.status, []).append(item)
-        days.append(schemas.CalendarDay(local_date=local_date, groups=groups, assignments=day_items))
-    return schemas.MonthlyScheduleRead(schedule_id=schedule.id, version_id=version.id, version_no=version.version_no, year=year, month=month, status=version.status, solver_status=version.solver_status, days=days)
+    ensure_team(db, team_id)
+    schedule, version = get_active_schedule_version(db, team_id, year, month)
+    return build_monthly_schedule_read(db, schedule, version)
+
+
+@app.patch("/api/teams/{team_id}/schedules/{year}/{month}/assignments", response_model=schemas.MonthlyScheduleRead)
+def update_schedule_assignment(
+    team_id: int,
+    year: int,
+    month: int,
+    payload: schemas.ScheduleAssignmentUpdate,
+    db: Session = Depends(get_db),
+) -> schemas.MonthlyScheduleRead:
+    ensure_team(db, team_id)
+    schedule, version = get_active_schedule_version(db, team_id, year, month)
+    if version.status == models.ScheduleVersionStatus.CONFIRMED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmed schedules cannot be changed")
+    if payload.local_date.year != year or payload.local_date.month != month:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment date is outside the schedule month")
+    employee = db.get(models.Employee, payload.employee_id)
+    if employee is None or employee.team_id != team_id or not employee.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="employee does not belong to team")
+    if payload.shift_type_id is not None:
+        shift_type = db.get(models.ShiftType, payload.shift_type_id)
+        if shift_type is None or shift_type.team_id != team_id or not shift_type.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="shift type does not belong to team")
+
+    assignment = db.scalar(
+        select(models.Assignment).where(
+            models.Assignment.version_id == version.id,
+            models.Assignment.employee_id == payload.employee_id,
+            models.Assignment.local_date == payload.local_date,
+        )
+    )
+    if assignment is None:
+        assignment = models.Assignment(team_id=team_id, version_id=version.id, employee_id=payload.employee_id, local_date=payload.local_date, status=payload.status)
+        db.add(assignment)
+    assignment.status = payload.status
+    assignment.shift_type_id = payload.shift_type_id
+    assignment.locked = payload.locked
+    assignment.source = models.AssignmentSource.MANUAL
+    assignment.change_reason = payload.change_reason
+    commit_or_409(db)
+    db.refresh(version)
+    return build_monthly_schedule_read(db, schedule, version)
+
+
+@app.get("/api/teams/{team_id}/schedules/{year}/{month}/validation", response_model=schemas.ScheduleValidationRead)
+def validate_monthly_schedule(team_id: int, year: int, month: int, db: Session = Depends(get_db)) -> schemas.ScheduleValidationRead:
+    ensure_team(db, team_id)
+    schedule, version = get_active_schedule_version(db, team_id, year, month)
+    return validate_schedule_version(db, schedule, version)
 
 
 @app.get("/api/teams/{team_id}/setup-summary", response_model=schemas.SetupSummary)

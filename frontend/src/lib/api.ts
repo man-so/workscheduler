@@ -147,6 +147,21 @@ export type MonthlySchedule = {
   days: CalendarDay[];
 };
 
+export type ScheduleValidationIssue = {
+  severity: string;
+  code: string;
+  message: string;
+  local_date: string | null;
+  employee_id: number | null;
+  shift_type_id: number | null;
+};
+
+export type ScheduleValidation = {
+  ok: boolean;
+  issue_count: number;
+  issues: ScheduleValidationIssue[];
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -168,6 +183,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function post<T>(path: string, body: unknown): Promise<T> {
   return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+function patch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function getHealth(): Promise<HealthResponse> {
@@ -242,4 +261,24 @@ export function cancelGeneration(teamId: number, runId: number): Promise<Generat
 
 export function getMonthlySchedule(teamId: number, year: number, month: number): Promise<MonthlySchedule> {
   return request<MonthlySchedule>(`/api/teams/${teamId}/schedules/${year}/${month}`);
+}
+
+export function updateScheduleAssignment(
+  teamId: number,
+  year: number,
+  month: number,
+  payload: {
+    employee_id: number;
+    local_date: string;
+    status: "WORK" | "OFF" | "LEAVE" | "OTHER";
+    shift_type_id: number | null;
+    locked?: boolean;
+    change_reason?: string | null;
+  }
+): Promise<MonthlySchedule> {
+  return patch<MonthlySchedule>(`/api/teams/${teamId}/schedules/${year}/${month}/assignments`, payload);
+}
+
+export function validateMonthlySchedule(teamId: number, year: number, month: number): Promise<ScheduleValidation> {
+  return request<ScheduleValidation>(`/api/teams/${teamId}/schedules/${year}/${month}/validation`);
 }

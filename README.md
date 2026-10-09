@@ -1,6 +1,6 @@
 # AI Shift Scheduler
 
-팀별 근무표 자동 생성을 위한 앱입니다. 현재 구현 단계는 Phase 3이며, 설정 폼, 근무형태 설정 챗봇, 에이전트 기반 Constraint JSON 생성, OR-Tools CP-SAT 월간 근무표 생성을 제공합니다.
+팀별 근무표 자동 생성을 위한 앱입니다. 현재 구현 단계는 Phase 4이며, 설정 폼, 근무형태 설정 챗봇, 에이전트 기반 Constraint JSON 생성, OR-Tools CP-SAT 월간 근무표 생성, 월간 달력 상세 확인과 수동 수정 기반을 제공합니다.
 
 ## 현재 범위
 
@@ -23,6 +23,9 @@
 - OR-Tools CP-SAT 기반 월간 배정, Hard/Soft 제약, 공정성 목적함수
 - INFEASIBLE 원인과 지원되지 않는 제약조건 보고
 - 모든 직원·모든 날짜를 포함하는 7열 월간 달력 API/UI
+- 날짜 클릭 상세 패널에서 직원별 근무/휴무 상태 수동 수정
+- 수동 수정 후 월간표 기본 무결성 및 필요 인원 검증
+- 확정된 근무표의 무단 변경 방지 API
 - 백엔드 기본 테스트
 
 아직 구현하지 않음:
@@ -117,6 +120,8 @@ npm run build
 - `GET /api/teams/{team_id}/generation-runs/{run_id}`
 - `POST /api/teams/{team_id}/generation-runs/{run_id}/cancel`
 - `GET /api/teams/{team_id}/schedules/{year}/{month}`
+- `PATCH /api/teams/{team_id}/schedules/{year}/{month}/assignments`
+- `GET /api/teams/{team_id}/schedules/{year}/{month}/validation`
 - `POST /api/teams/{team_id}/availability`
 
 ## Phase 2 챗봇 동작
@@ -139,6 +144,13 @@ npm run build
 - CP-SAT는 직원 계약, 가능 유형, 휴무, 필요 인원, 휴식, 연속근무, 야간 후 휴무 데이터를 동적으로 제약으로 구성합니다.
 - 결과는 `DRAFT` 버전으로 저장되며 관리자 확정 전 상태입니다.
 - Codex/Claude 인증·사용량·timeout 실패는 실행 기록에 저장하고 근무표를 생성하지 않습니다.
+
+## Phase 4 달력 동작
+
+- 월간 달력은 7열 구조를 유지하며 각 날짜 칸에 모든 활성 직원을 근무유형 또는 휴무 상태별로 그룹화합니다.
+- 날짜를 클릭하면 우측 상세 패널에서 해당 날짜의 모든 직원 배정을 확인하고 근무유형, 휴무, 연차, 기타 상태로 수정할 수 있습니다.
+- 수정은 활성 `DRAFT` 스케줄 버전에 저장되며, 저장 직후 필요 인원 최소·최대·목표값과 누락 배정을 다시 검증합니다.
+- `CONFIRMED` 상태의 스케줄 버전은 API에서 수정을 거부합니다.
 
 ## Electron 전환 PoC
 

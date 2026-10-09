@@ -202,6 +202,38 @@ class AssignmentRead(AssignmentCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ScheduleAssignmentUpdate(BaseModel):
+    employee_id: int
+    local_date: date
+    status: str = Field(pattern="^(WORK|OFF|LEAVE|OTHER)$")
+    shift_type_id: int | None = None
+    locked: bool = False
+    change_reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_assignment(self) -> "ScheduleAssignmentUpdate":
+        if self.status == "WORK" and self.shift_type_id is None:
+            raise ValueError("WORK assignments require shift_type_id")
+        if self.status != "WORK" and self.shift_type_id is not None:
+            raise ValueError("non-work assignments cannot include shift_type_id")
+        return self
+
+
+class ScheduleValidationIssue(BaseModel):
+    severity: str
+    code: str
+    message: str
+    local_date: date | None = None
+    employee_id: int | None = None
+    shift_type_id: int | None = None
+
+
+class ScheduleValidationRead(BaseModel):
+    ok: bool
+    issue_count: int
+    issues: list[ScheduleValidationIssue]
+
+
 class SetupQuestion(BaseModel):
     id: str
     label: str
