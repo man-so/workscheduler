@@ -1,0 +1,717 @@
+{
+  "generated_at": "2026-10-09T22:35:51",
+  "team_id": 6,
+  "year": 2026,
+  "month": 11,
+  "workflow": [
+    {
+      "step": 1,
+      "name": "팀 생성",
+      "status": "PASS",
+      "result": {
+        "name": "Phase 7 Pilot 223228",
+        "timezone": "Asia/Seoul",
+        "id": 6
+      }
+    },
+    {
+      "step": 3,
+      "name": "챗봇 직원 입력",
+      "status": "PASS",
+      "needs_approval": true,
+      "changes": [
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-01",
+            "employee_no": "EMP-Pilot-01"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-02",
+            "employee_no": "EMP-Pilot-02"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-03",
+            "employee_no": "EMP-Pilot-03"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-04",
+            "employee_no": "EMP-Pilot-04"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-05",
+            "employee_no": "EMP-Pilot-05"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-06",
+            "employee_no": "EMP-Pilot-06"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-07",
+            "employee_no": "EMP-Pilot-07"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-08",
+            "employee_no": "EMP-Pilot-08"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-09",
+            "employee_no": "EMP-Pilot-09"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-10",
+            "employee_no": "EMP-Pilot-10"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-11",
+            "employee_no": "EMP-Pilot-11"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-12",
+            "employee_no": "EMP-Pilot-12"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-13",
+            "employee_no": "EMP-Pilot-13"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-14",
+            "employee_no": "EMP-Pilot-14"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-15",
+            "employee_no": "EMP-Pilot-15"
+          }
+        },
+        {
+          "entity": "employees",
+          "action": "create",
+          "label": "직원",
+          "before": null,
+          "after": {
+            "display_name": "Pilot-16",
+            "employee_no": "EMP-Pilot-16"
+          }
+        }
+      ]
+    },
+    {
+      "step": 5,
+      "name": "직원 입력 승인",
+      "status": "PASS",
+      "applied": 16
+    },
+    {
+      "step": 2,
+      "name": "직원 등록",
+      "status": "PASS",
+      "count": 16
+    },
+    {
+      "step": 4,
+      "name": "근무조건 미리보기",
+      "status": "PASS",
+      "needs_approval": true,
+      "changes": [
+        {
+          "entity": "shift_types",
+          "action": "create",
+          "label": "근무유형",
+          "before": null,
+          "after": {
+            "break_minutes": 60,
+            "category": "DAY",
+            "code": "DAY",
+            "end_time": "17:00:00",
+            "ends_next_day": false,
+            "is_work": true,
+            "name": "근무유형 주간",
+            "paid_minutes": 480,
+            "start_time": "09:00:00"
+          }
+        },
+        {
+          "entity": "shift_types",
+          "action": "create",
+          "label": "근무유형",
+          "before": null,
+          "after": {
+            "break_minutes": 60,
+            "category": "EARLY_DAY",
+            "code": "EARLY_DAY",
+            "end_time": "14:00:00",
+            "ends_next_day": false,
+            "is_work": true,
+            "name": "조기",
+            "paid_minutes": 480,
+            "start_time": "06:00:00"
+          }
+        },
+        {
+          "entity": "shift_types",
+          "action": "create",
+          "label": "근무유형",
+          "before": null,
+          "after": {
+            "break_minutes": 0,
+            "category": "NIGHT",
+            "code": "NIGHT",
+            "end_time": "06:00:00",
+            "ends_next_day": true,
+            "is_work": true,
+            "name": "야간",
+            "paid_minutes": 480,
+            "start_time": "22:00:00"
+          }
+        },
+        {
+          "entity": "shift_types",
+          "action": "create",
+          "label": "근무유형",
+          "before": null,
+          "after": {
+            "break_minutes": 0,
+            "category": "EARLY_NIGHT",
+            "code": "EARLY_NIGHT",
+            "end_time": "04:00:00",
+            "ends_next_day": true,
+            "is_work": true,
+            "name": "야간 조기",
+            "paid_minutes": 480,
+            "start_time": "20:00:00"
+          }
+        },
+        {
+          "entity": "work_rules",
+          "action": "create",
+          "label": "근무규칙",
+          "before": null,
+          "after": {
+            "max_consecutive_night_shifts": 2,
+            "max_consecutive_work_days": 5,
+            "min_rest_minutes": 660,
+            "name": "기본 근무규칙",
+            "night_requires_next_day_off": true,
+            "soft_weights_json": "{\"early\": 6, \"night\": 22}"
+          }
+        }
+      ]
+    },
+    {
+      "step": "2-5",
+      "name": "폼/API 보완 설정",
+      "status": "PASS",
+      "contracts": 16,
+      "coverage": 4
+    },
+    {
+      "step": "1-data",
+      "name": "연차 및 휴무 신청",
+      "status": "PASS",
+      "count": 4
+    },
+    {
+      "step": 7,
+      "name": "설정 스키마/누락 검증",
+      "status": "PASS",
+      "completion_percent": 100,
+      "missing": [],
+      "conflicts": []
+    },
+    {
+      "step": 6,
+      "name": "Codex CLI 실제 호출 시작",
+      "status": "PASS",
+      "run_id": 4
+    },
+    {
+      "step": 8,
+      "name": "OR-Tools 월간 근무표 생성",
+      "status": "PASS",
+      "run_status": "SUCCEEDED",
+      "elapsed_seconds": 201.31440640002256,
+      "error": null
+    },
+    {
+      "step": 9,
+      "name": "월간 달력 표시 데이터 조회",
+      "status": "PASS",
+      "days": 30,
+      "first_day_assignments": 16
+    },
+    {
+      "step": 10,
+      "name": "수동 수정",
+      "status": "PASS",
+      "employee": "Pilot-01",
+      "date": "2026-11-01"
+    },
+    {
+      "step": 11,
+      "name": "변경 후 재검증",
+      "status": "PASS",
+      "ok": true,
+      "issues": 0
+    },
+    {
+      "step": 12,
+      "name": "근무표 확정",
+      "status": "PASS",
+      "result": {
+        "id": 4,
+        "schedule_id": 4,
+        "version_no": 1,
+        "status": "CONFIRMED",
+        "solver_status": "FEASIBLE",
+        "generated_at": "2026-10-09T13:35:50.601073",
+        "confirmed_at": "2026-10-09T13:35:51.068994",
+        "modified_at": "2026-10-09T13:35:50",
+        "notes": "Generated by CP-SAT; awaiting administrator approval.",
+        "is_active": true
+      },
+      "error": null
+    },
+    {
+      "step": 13,
+      "name": "Excel 내보내기",
+      "status": "PASS",
+      "path": "C:\\Users\\p\\Desktop\\vibecoding\\근무표 자동작성\\artifacts\\phase7\\phase7_pilot_schedule.xlsx",
+      "excel": {
+        "open_ok": true,
+        "sheets": [
+          "월간 달력",
+          "직원별 현황",
+          "근무유형 통계",
+          "공정성 통계",
+          "검증 결과"
+        ],
+        "all_employees_in_calendar": true,
+        "missing_employees": [],
+        "print_area": "'월간 달력'!$A$1:$G$10",
+        "orientation": "landscape"
+      }
+    },
+    {
+      "step": 15,
+      "name": "확정 근무표 재조회",
+      "status": "PASS",
+      "status_value": "CONFIRMED",
+      "days": 30
+    }
+  ],
+  "generation_run": {
+    "id": 4,
+    "status": "SUCCEEDED",
+    "elapsed_seconds": 201.31440640002256,
+    "agent_id": "codex",
+    "log_tail": "tial storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:30.201852Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-09T13:32:30.201874Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-09T13:32:30.214278Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:30.214927Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:30.258733Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: \"Bearer realm=\\\"OAuth\\\", resource_metadata=\\\"https://mcp.linear.app/.well-known/oauth-protected-resource/mcp\\\", scope=\\\"read write\\\"\" })\n2026-10-09T13:32:30.258799Z  WARN codex_mcp::rmcp_client: MCP server startup failed server_name=\"linear\" error=handshaking with MCP server failed: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request\n2026-10-09T13:32:30.259403Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:31.541318Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:49.179956Z  WARN codex_mcp::rmcp_client: failed to initialize MCP client during shutdown: MCP startup failed: handshaking with MCP server failed: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request\n",
+    "usage": {
+      "raw_log_tail": "client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request\n2026-10-09T13:32:30.259403Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:31.541318Z  WARN codex_otel::auth_storage: credential storage file fallback completed credential_kind=\"mcp\" store_mode=\"auto\" selected_store=\"secrets\" actual_store=\"file\" operation=\"load\" secure_outcome=\"not_found\" outcome=\"not_found\" fallback_reason=\"secure_entry_missing\" secure_error=\"none\" storage_phase=\"policy\" originator=\"codex_desktop\"\n2026-10-09T13:32:49.179956Z  WARN codex_mcp::rmcp_client: failed to initialize MCP client during shutdown: MCP startup failed: handshaking with MCP server failed: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request: Send message error Transport [codex_rmcp_client::event_notification_transport::EventNotificationTransport<rmcp::transport::worker::WorkerTransport<rmcp::transport::streamable_http_client::StreamableHttpClientWorker<codex_rmcp_client::http_client_adapter::StreamableHttpClientAdapter>>>] error: Auth required, when send initialize request\n"
+    }
+  },
+  "quality": {
+    "hard_constraint_errors": 0,
+    "soft_warnings": 0,
+    "missing_employee_days": [],
+    "duplicate_assignment_days": [],
+    "leave_violations": [],
+    "night_min": 4,
+    "night_max": 4
+  },
+  "natural_language_cases": [
+    {
+      "input": "직원은 Alpha, Bravo, Charlie",
+      "expected": [
+        "employees"
+      ],
+      "interpreted_entities": [
+        "employees"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [
+          {
+            "display_name": "Alpha",
+            "employee_no": "EMP-Alpha"
+          },
+          {
+            "display_name": "Bravo",
+            "employee_no": "EMP-Bravo"
+          },
+          {
+            "display_name": "Charlie",
+            "employee_no": "EMP-Charlie"
+          }
+        ],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "주간 09:00-17:00, 야간 22:00-06:00",
+      "expected": [
+        "shift_types"
+      ],
+      "interpreted_entities": [
+        "shift_types"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [
+          {
+            "code": "DAY",
+            "name": "주간",
+            "category": "DAY",
+            "start_time": "09:00:00",
+            "end_time": "17:00:00",
+            "ends_next_day": false,
+            "break_minutes": 60,
+            "paid_minutes": 480,
+            "is_work": true
+          },
+          {
+            "code": "NIGHT",
+            "name": "야간",
+            "category": "NIGHT",
+            "start_time": "22:00:00",
+            "end_time": "06:00:00",
+            "ends_next_day": true,
+            "break_minutes": 0,
+            "paid_minutes": 480,
+            "is_work": true
+          }
+        ],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "야간 조기 20:00-04:00",
+      "expected": [
+        "shift_types"
+      ],
+      "interpreted_entities": [
+        "shift_types"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [
+          {
+            "code": "EARLY_NIGHT",
+            "name": "야간 조기",
+            "category": "EARLY_NIGHT",
+            "start_time": "20:00:00",
+            "end_time": "04:00:00",
+            "ends_next_day": true,
+            "break_minutes": 0,
+            "paid_minutes": 480,
+            "is_work": true
+          }
+        ],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "최소 휴식 11시간, 연속근무 5일, 연속 야간 2일, 야간 후 휴무",
+      "expected": [
+        "work_rules"
+      ],
+      "interpreted_entities": [
+        "work_rules"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [
+          {
+            "name": "기본 근무규칙",
+            "min_rest_minutes": 660,
+            "max_consecutive_work_days": 5,
+            "max_consecutive_night_shifts": 2,
+            "night_requires_next_day_off": true,
+            "soft_weights_json": "{\"night\": 2}"
+          }
+        ],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "평일 주간 5명, 야간 1명",
+      "expected": [
+        "coverage_requirements"
+      ],
+      "interpreted_entities": [
+        "coverage_requirements"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [
+          {
+            "name": "평일 주간",
+            "shift_type_id": 19,
+            "days_of_week_json": "[\"MON\", \"TUE\", \"WED\", \"THU\", \"FRI\"]",
+            "min_count": 5,
+            "target_count": 5,
+            "max_count": 5
+          },
+          {
+            "name": "평일 야간",
+            "shift_type_id": 21,
+            "days_of_week_json": "[\"MON\", \"TUE\", \"WED\", \"THU\", \"FRI\"]",
+            "min_count": 1,
+            "target_count": 1,
+            "max_count": 1
+          }
+        ],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "주말 야간 1명",
+      "expected": [
+        "coverage_requirements"
+      ],
+      "interpreted_entities": [
+        "coverage_requirements"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [
+          {
+            "name": "주말 야간",
+            "shift_type_id": 21,
+            "days_of_week_json": "[\"SAT\", \"SUN\"]",
+            "min_count": 1,
+            "target_count": 1,
+            "max_count": 1
+          }
+        ],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "Pilot-04는 주 4일",
+      "expected": [
+        "employee_contracts"
+      ],
+      "interpreted_entities": [
+        "employee_contracts"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [
+          {
+            "employee_id": 66,
+            "weekly_work_days": 4
+          }
+        ],
+        "availability": []
+      }
+    },
+    {
+      "input": "Pilot-03 2026-11-05 휴무",
+      "expected": [
+        "availability"
+      ],
+      "interpreted_entities": [
+        "availability"
+      ],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": [
+          {
+            "employee_id": 65,
+            "local_date": "2026-11-05",
+            "availability_type": "PREFERRED_OFF",
+            "note": "챗봇 입력",
+            "source": "CHAT"
+          }
+        ]
+      }
+    },
+    {
+      "input": "야간 공정성 10, 조기 공정성 4, 주말 공정성 3",
+      "expected": [
+        "work_rules"
+      ],
+      "interpreted_entities": [],
+      "matches_expected": false,
+      "needs_followup": true,
+      "unsupported_or_missing": false,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    },
+    {
+      "input": "야간근무 다음날 오전근무 금지",
+      "expected": [
+        "unsupported"
+      ],
+      "interpreted_entities": [],
+      "matches_expected": true,
+      "needs_followup": false,
+      "unsupported_or_missing": true,
+      "constraint_patch": {
+        "team": {},
+        "employees": [],
+        "shift_types": [],
+        "work_rules": [],
+        "coverage_requirements": [],
+        "employee_contracts": [],
+        "availability": []
+      }
+    }
+  ],
+  "artifacts": {
+    "excel": "C:\\Users\\p\\Desktop\\vibecoding\\근무표 자동작성\\artifacts\\phase7\\phase7_pilot_schedule.xlsx",
+    "calendar_screenshot": "C:\\Users\\p\\Desktop\\vibecoding\\근무표 자동작성\\artifacts\\phase7\\phase7_calendar_electron.png"
+  },
+  "overall": "PASS"
+}
