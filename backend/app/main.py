@@ -1,19 +1,21 @@
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from calendar import monthrange
-from datetime import date, time
+from datetime import UTC, date, datetime, time
 import shutil
 from typing import TypeVar
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import Base, engine, get_db
 from app.agent_runner import AGENT_NAMES
+from app.excel_export import build_schedule_workbook
 from app.generation import cancel_generation, submit_generation
 from app import models, schemas
 from app.setup_logic import analyze_setup, dumps, get_team_rows, loads, parse_setup_message, proposed_changes_from_patch
@@ -338,6 +340,40 @@ def get_active_schedule_version(
     return schedule, version
 
 
+def get_schedule_version_or_404(
+    db: Session,
+    team_id: int,
+    year: int,
+    month: int,
+    version_id: int,
+) -> tuple[models.Schedule, models.ScheduleVersion]:
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must be between 1 and 12")
+    schedule = db.scalar(select(models.Schedule).where(models.Schedule.team_id == team_id, models.Schedule.year == year, models.Schedule.month == month))
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule not found")
+    version = db.get(models.ScheduleVersion, version_id)
+    if version is None or version.schedule_id != schedule.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="schedule version not found")
+    return schedule, version
+
+
+def read_schedule_version(db: Session, schedule: models.Schedule, version: models.ScheduleVersion) -> schemas.ScheduleVersionRead:
+    modified_at = db.scalar(select(func.max(models.Assignment.updated_at)).where(models.Assignment.version_id == version.id))
+    return schemas.ScheduleVersionRead(
+        id=version.id,
+        schedule_id=version.schedule_id,
+        version_no=version.version_no,
+        status=version.status,
+        solver_status=version.solver_status,
+        generated_at=version.generated_at,
+        confirmed_at=version.confirmed_at,
+        modified_at=modified_at,
+        notes=version.notes,
+        is_active=schedule.active_version_id == version.id,
+    )
+
+
 def build_monthly_schedule_read(
     db: Session,
     schedule: models.Schedule,
@@ -428,6 +464,38 @@ def validate_schedule_version(
     return schemas.ScheduleValidationRead(ok=error_count == 0, issue_count=len(issues), issues=issues)
 
 
+def clone_schedule_version(db: Session, schedule: models.Schedule, source_version: models.ScheduleVersion) -> models.ScheduleVersion:
+    latest = db.scalar(select(models.ScheduleVersion).where(models.ScheduleVersion.schedule_id == schedule.id).order_by(models.ScheduleVersion.version_no.desc()))
+    version_no = (latest.version_no + 1) if latest else 1
+    version = models.ScheduleVersion(
+        schedule_id=schedule.id,
+        version_no=version_no,
+        status=models.ScheduleVersionStatus.DRAFT,
+        input_hash=source_version.input_hash,
+        config_hash=source_version.config_hash,
+        solver_status=source_version.solver_status,
+        generated_at=datetime.now(UTC),
+        notes=f"Draft cloned from version {source_version.version_no}.",
+    )
+    db.add(version)
+    db.flush()
+    assignments = db.scalars(select(models.Assignment).where(models.Assignment.version_id == source_version.id)).all()
+    for item in assignments:
+        db.add(models.Assignment(
+            team_id=item.team_id,
+            version_id=version.id,
+            employee_id=item.employee_id,
+            local_date=item.local_date,
+            status=item.status,
+            shift_type_id=item.shift_type_id,
+            locked=False,
+            source=models.AssignmentSource.REVISION,
+            change_reason=f"cloned from version {source_version.version_no}",
+        ))
+    schedule.active_version_id = version.id
+    return version
+
+
 @app.post("/api/teams/{team_id}/schedules/generate", response_model=schemas.GenerationRunRead, status_code=status.HTTP_202_ACCEPTED)
 def start_schedule_generation(
     team_id: int,
@@ -481,6 +549,65 @@ def get_monthly_schedule(team_id: int, year: int, month: int, db: Session = Depe
     return build_monthly_schedule_read(db, schedule, version)
 
 
+@app.get("/api/teams/{team_id}/schedules/{year}/{month}/versions", response_model=list[schemas.ScheduleVersionRead])
+def list_schedule_versions(team_id: int, year: int, month: int, db: Session = Depends(get_db)) -> list[schemas.ScheduleVersionRead]:
+    ensure_team(db, team_id)
+    if month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="month must be between 1 and 12")
+    schedule = db.scalar(select(models.Schedule).where(models.Schedule.team_id == team_id, models.Schedule.year == year, models.Schedule.month == month))
+    if schedule is None:
+        return []
+    versions = db.scalars(select(models.ScheduleVersion).where(models.ScheduleVersion.schedule_id == schedule.id).order_by(models.ScheduleVersion.version_no.desc())).all()
+    return [read_schedule_version(db, schedule, version) for version in versions]
+
+
+@app.get("/api/teams/{team_id}/schedules/{year}/{month}/versions/{version_id}", response_model=schemas.MonthlyScheduleRead)
+def get_monthly_schedule_version(team_id: int, year: int, month: int, version_id: int, db: Session = Depends(get_db)) -> schemas.MonthlyScheduleRead:
+    ensure_team(db, team_id)
+    schedule, version = get_schedule_version_or_404(db, team_id, year, month, version_id)
+    return build_monthly_schedule_read(db, schedule, version)
+
+
+@app.post("/api/teams/{team_id}/schedules/{year}/{month}/versions/{version_id}/clone", response_model=schemas.ScheduleVersionRead, status_code=status.HTTP_201_CREATED)
+def clone_monthly_schedule_version(team_id: int, year: int, month: int, version_id: int, db: Session = Depends(get_db)) -> schemas.ScheduleVersionRead:
+    ensure_team(db, team_id)
+    schedule, version = get_schedule_version_or_404(db, team_id, year, month, version_id)
+    cloned = clone_schedule_version(db, schedule, version)
+    commit_or_409(db)
+    db.refresh(cloned)
+    return read_schedule_version(db, schedule, cloned)
+
+
+@app.post("/api/teams/{team_id}/schedules/{year}/{month}/confirm", response_model=schemas.ScheduleVersionRead)
+def confirm_monthly_schedule(
+    team_id: int,
+    year: int,
+    month: int,
+    payload: schemas.ConfirmScheduleRequest,
+    db: Session = Depends(get_db),
+) -> schemas.ScheduleVersionRead:
+    ensure_team(db, team_id)
+    schedule, version = get_active_schedule_version(db, team_id, year, month)
+    if version.status != models.ScheduleVersionStatus.DRAFT:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="only draft schedules can be confirmed")
+    validation = validate_schedule_version(db, schedule, version)
+    hard_issues = [issue for issue in validation.issues if issue.severity == "ERROR"]
+    soft_issues = [issue for issue in validation.issues if issue.severity == "WARN"]
+    if hard_issues:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=[issue.model_dump(mode="json") for issue in hard_issues])
+    if soft_issues and not payload.approve_soft_issues:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=[issue.model_dump(mode="json") for issue in soft_issues])
+
+    versions = db.scalars(select(models.ScheduleVersion).where(models.ScheduleVersion.schedule_id == schedule.id, models.ScheduleVersion.id != version.id)).all()
+    for old_version in versions:
+        old_version.status = models.ScheduleVersionStatus.ARCHIVED
+    version.status = models.ScheduleVersionStatus.CONFIRMED
+    version.confirmed_at = datetime.now(UTC)
+    commit_or_409(db)
+    db.refresh(version)
+    return read_schedule_version(db, schedule, version)
+
+
 @app.patch("/api/teams/{team_id}/schedules/{year}/{month}/assignments", response_model=schemas.MonthlyScheduleRead)
 def update_schedule_assignment(
     team_id: int,
@@ -491,7 +618,7 @@ def update_schedule_assignment(
 ) -> schemas.MonthlyScheduleRead:
     ensure_team(db, team_id)
     schedule, version = get_active_schedule_version(db, team_id, year, month)
-    if version.status == models.ScheduleVersionStatus.CONFIRMED:
+    if version.status != models.ScheduleVersionStatus.DRAFT:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="confirmed schedules cannot be changed")
     if payload.local_date.year != year or payload.local_date.month != month:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="assignment date is outside the schedule month")
@@ -528,6 +655,21 @@ def validate_monthly_schedule(team_id: int, year: int, month: int, db: Session =
     ensure_team(db, team_id)
     schedule, version = get_active_schedule_version(db, team_id, year, month)
     return validate_schedule_version(db, schedule, version)
+
+
+@app.get("/api/teams/{team_id}/schedules/{year}/{month}/export.xlsx")
+def export_monthly_schedule(team_id: int, year: int, month: int, db: Session = Depends(get_db)) -> StreamingResponse:
+    team = ensure_team(db, team_id)
+    schedule, version = get_active_schedule_version(db, team_id, year, month)
+    calendar = build_monthly_schedule_read(db, schedule, version)
+    validation = validate_schedule_version(db, schedule, version)
+    output = build_schedule_workbook(team, version, calendar, validation)
+    filename = f"workscheduler_{team_id}_{year}_{month:02d}_v{version.version_no}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/teams/{team_id}/setup-summary", response_model=schemas.SetupSummary)

@@ -9,12 +9,17 @@ import {
   createTeam,
   createWorkRule,
   cancelGeneration,
+  cloneScheduleVersion,
+  confirmMonthlySchedule,
   generateSchedule,
+  getScheduleExportUrl,
+  getScheduleVersion,
   getGenerationRun,
   getActiveSetupSession,
   getHealth,
   getMonthlySchedule,
   getSetupSummary,
+  listScheduleVersions,
   listTeams,
   sendSetupMessage,
   updateScheduleAssignment,
@@ -23,6 +28,7 @@ import {
   type CalendarAssignment,
   type CalendarDay,
   type MonthlySchedule,
+  type ScheduleVersion,
   type ScheduleValidation,
   type SetupSession,
   type SetupSummary,
@@ -55,6 +61,8 @@ export default function Home() {
   const [calendar, setCalendar] = useState<MonthlySchedule | null>(null);
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null);
   const [validation, setValidation] = useState<ScheduleValidation | null>(null);
+  const [versions, setVersions] = useState<ScheduleVersion[]>([]);
+  const [approveSoftIssues, setApproveSoftIssues] = useState(false);
   const [generationMonth, setGenerationMonth] = useState({ year: 2026, month: 11 });
   const [agentId, setAgentId] = useState<"codex" | "claude">("codex");
 
@@ -190,6 +198,7 @@ export default function Home() {
     setCalendar(null);
     setSelectedDay(null);
     setValidation(null);
+    setVersions([]);
     try {
       let next = await generateSchedule(selectedTeamId, { ...generationMonth, agent_id: agentId, timeout_seconds: 120 });
       setGeneration(next);
@@ -202,6 +211,7 @@ export default function Home() {
         const nextCalendar = await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month);
         setCalendar(nextCalendar);
         setValidation(await validateMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
+        setVersions(await listScheduleVersions(selectedTeamId, generationMonth.year, generationMonth.month));
       } else if (next.status === "INFEASIBLE") {
         const conflicts = Array.isArray(next.result?.conflicts) ? next.result.conflicts.join(" ") : "Hard constraint 충돌을 확인하세요.";
         setError(`근무표를 생성하지 못했습니다. ${conflicts}`);
@@ -222,9 +232,41 @@ export default function Home() {
       const nextCalendar = await getMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month);
       setCalendar(nextCalendar);
       setValidation(await validateMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month));
+      setVersions(await listScheduleVersions(selectedTeamId, generationMonth.year, generationMonth.month));
     } catch {
       setError("저장된 근무표를 찾을 수 없습니다.");
     }
+  }
+
+  async function handleViewVersion(versionId: number) {
+    if (!selectedTeamId) return;
+    setError(null);
+    const nextCalendar = await getScheduleVersion(selectedTeamId, generationMonth.year, generationMonth.month, versionId);
+    setCalendar(nextCalendar);
+    setSelectedDay(null);
+  }
+
+  async function handleCloneVersion(versionId: number) {
+    if (!selectedTeamId) return;
+    setError(null);
+    await cloneScheduleVersion(selectedTeamId, generationMonth.year, generationMonth.month, versionId);
+    await handleLoadSchedule();
+  }
+
+  async function handleConfirmSchedule() {
+    if (!selectedTeamId) return;
+    setError(null);
+    try {
+      await confirmMonthlySchedule(selectedTeamId, generationMonth.year, generationMonth.month, approveSoftIssues);
+      await handleLoadSchedule();
+    } catch {
+      setError("확정할 수 없습니다. Hard Constraint 오류가 있거나 Soft Constraint 승인 표시가 필요합니다.");
+    }
+  }
+
+  function handleExportExcel() {
+    if (!selectedTeamId) return;
+    window.location.href = getScheduleExportUrl(selectedTeamId, generationMonth.year, generationMonth.month);
   }
 
   async function handleCancelGeneration() {
@@ -248,17 +290,20 @@ export default function Home() {
     setCalendar(nextCalendar);
     setSelectedDay(nextCalendar.days.find((day) => day.local_date === selectedDay.local_date) ?? null);
     setValidation(await validateMonthlySchedule(selectedTeamId, calendar.year, calendar.month));
+    setVersions(await listScheduleVersions(selectedTeamId, calendar.year, calendar.month));
   }
 
   const shiftTypes: ShiftType[] = summary?.shift_types ?? [];
+  const activeVersion = calendar ? versions.find((version) => version.id === calendar.version_id) : null;
+  const canEditCalendar = Boolean(calendar && calendar.status === "DRAFT" && (activeVersion?.is_active ?? true));
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-5 text-slate-950 md:px-6">
       <div className="mx-auto flex max-w-7xl flex-col gap-5">
         <header className="flex flex-col gap-3 border-b border-slate-200 pb-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm font-semibold text-emerald-700">Phase 3</p>
-            <h1 className="text-3xl font-semibold">AI 근무표 생성</h1>
+            <p className="text-sm font-semibold text-emerald-700">Phase 5</p>
+            <h1 className="text-3xl font-semibold">AI 근무표 생성 및 확정</h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
               왼쪽에서 설정 상태와 직접 입력 폼을 관리하고, 오른쪽 챗봇에서 누락된 항목만 질문받아 변경사항을 승인합니다.
             </p>
@@ -415,9 +460,41 @@ export default function Home() {
             </div>
           ) : null}
           {calendar ? (
+            <div className="mt-3 flex flex-col gap-3 rounded border border-slate-200 bg-slate-50 p-3 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-slate-700">
+                현재 버전 <span className="font-semibold">v{calendar.version_no}</span> · {calendar.status}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={approveSoftIssues} onChange={(event) => setApproveSoftIssues(event.target.checked)} />
+                  Soft 이슈 확인
+                </label>
+                <button type="button" onClick={handleConfirmSchedule} className="rounded bg-slate-950 px-3 py-2 text-sm font-semibold text-white">확정</button>
+                <button type="button" onClick={handleExportExcel} className="rounded border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-700">Excel 다운로드</button>
+              </div>
+            </div>
+          ) : null}
+          {versions.length > 0 ? (
+            <div className="mt-3 rounded border border-slate-200 bg-white p-3">
+              <h3 className="text-sm font-semibold">버전 이력</h3>
+              <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {versions.map((version) => (
+                  <div key={version.id} className="rounded border border-slate-200 p-2 text-sm">
+                    <div className="font-semibold">v{version.version_no} · {version.status}{version.is_active ? " · active" : ""}</div>
+                    <div className="mt-1 text-xs text-slate-500">수정 {version.modified_at ? new Date(version.modified_at).toLocaleString() : "-"}</div>
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => handleViewVersion(version.id)} className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700">보기</button>
+                      <button type="button" onClick={() => handleCloneVersion(version.id)} className="rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-700">DRAFT 복제</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {calendar ? (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
               <MonthlyCalendar calendar={calendar} selectedDate={selectedDay?.local_date ?? null} onSelectDay={setSelectedDay} />
-              <DayDetailPanel day={selectedDay} shiftTypes={shiftTypes} onChangeAssignment={handleAssignmentChange} />
+              <DayDetailPanel day={selectedDay} shiftTypes={shiftTypes} editable={canEditCalendar} onChangeAssignment={handleAssignmentChange} />
             </div>
           ) : null}
         </section>
@@ -456,7 +533,7 @@ function MonthlyCalendar({ calendar, selectedDate, onSelectDay }: { calendar: Mo
   );
 }
 
-function DayDetailPanel({ day, shiftTypes, onChangeAssignment }: { day: CalendarDay | null; shiftTypes: ShiftType[]; onChangeAssignment: (assignment: CalendarAssignment, value: string) => void }) {
+function DayDetailPanel({ day, shiftTypes, editable, onChangeAssignment }: { day: CalendarDay | null; shiftTypes: ShiftType[]; editable: boolean; onChangeAssignment: (assignment: CalendarAssignment, value: string) => void }) {
   if (!day) {
     return (
       <aside className="mt-5 rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
@@ -468,7 +545,7 @@ function DayDetailPanel({ day, shiftTypes, onChangeAssignment }: { day: Calendar
     <aside className="mt-5 rounded border border-slate-200 bg-white p-4">
       <div className="border-b border-slate-200 pb-3">
         <h3 className="text-base font-semibold">{day.local_date}</h3>
-        <p className="mt-1 text-sm text-slate-500">변경 즉시 저장되고 월간표 검증이 다시 실행됩니다.</p>
+        <p className="mt-1 text-sm text-slate-500">{editable ? "변경 즉시 저장되고 월간표 검증이 다시 실행됩니다." : "확정 또는 과거 버전은 직접 수정할 수 없습니다."}</p>
       </div>
       <div className="mt-3 max-h-[520px] space-y-2 overflow-y-auto">
         {day.assignments.map((assignment) => (
@@ -477,7 +554,7 @@ function DayDetailPanel({ day, shiftTypes, onChangeAssignment }: { day: Calendar
               <div className="truncate text-sm font-semibold">{assignment.employee_name}</div>
               <div className="text-xs text-slate-500">{assignment.shift_type_name ?? statusLabel(assignment.status)}</div>
             </div>
-            <select className="min-w-0 rounded border border-slate-300 px-2 py-2 text-sm" value={assignment.status === "WORK" && assignment.shift_type_id ? String(assignment.shift_type_id) : assignment.status} onChange={(event) => onChangeAssignment(assignment, event.target.value)}>
+            <select disabled={!editable} className="min-w-0 rounded border border-slate-300 px-2 py-2 text-sm disabled:bg-slate-100" value={assignment.status === "WORK" && assignment.shift_type_id ? String(assignment.shift_type_id) : assignment.status} onChange={(event) => onChangeAssignment(assignment, event.target.value)}>
               <option value="OFF">휴무</option>
               <option value="LEAVE">연차</option>
               <option value="OTHER">기타</option>

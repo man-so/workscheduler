@@ -1,6 +1,6 @@
 # AI Shift Scheduler
 
-팀별 근무표 자동 생성을 위한 앱입니다. 현재 구현 단계는 Phase 4이며, 설정 폼, 근무형태 설정 챗봇, 에이전트 기반 Constraint JSON 생성, OR-Tools CP-SAT 월간 근무표 생성, 월간 달력 상세 확인과 수동 수정 기반을 제공합니다.
+팀별 근무표 자동 생성을 위한 앱입니다. 현재 구현 단계는 Phase 5이며, 설정 폼, 근무형태 설정 챗봇, 에이전트 기반 Constraint JSON 생성, OR-Tools CP-SAT 월간 근무표 생성, 월간 달력 수정, 버전 관리, 확정, Excel 내보내기를 제공합니다.
 
 ## 현재 범위
 
@@ -26,12 +26,18 @@
 - 날짜 클릭 상세 패널에서 직원별 근무/휴무 상태 수동 수정
 - 수동 수정 후 월간표 기본 무결성 및 필요 인원 검증
 - 확정된 근무표의 무단 변경 방지 API
+- 월별 스케줄 버전 이력 조회
+- 이전 버전에서 새 DRAFT 복제
+- Hard Constraint 검증 기반 확정 차단
+- Soft Constraint 확인 후 확정
+- 확정 시 과거 버전 ARCHIVED 보관
+- openpyxl 기반 월간 달력 Excel 내보내기
+- Excel 내 직원별 현황, 근무유형 통계, 공정성 통계, 검증 결과 시트
 - 백엔드 기본 테스트
 
 아직 구현하지 않음:
 
-- Excel 내보내기
-- 확정/개정 버전 워크플로 전체
+- 운영용 DB 마이그레이션 도구
 
 ## 환경변수
 
@@ -120,8 +126,13 @@ npm run build
 - `GET /api/teams/{team_id}/generation-runs/{run_id}`
 - `POST /api/teams/{team_id}/generation-runs/{run_id}/cancel`
 - `GET /api/teams/{team_id}/schedules/{year}/{month}`
+- `GET /api/teams/{team_id}/schedules/{year}/{month}/versions`
+- `GET /api/teams/{team_id}/schedules/{year}/{month}/versions/{version_id}`
+- `POST /api/teams/{team_id}/schedules/{year}/{month}/versions/{version_id}/clone`
+- `POST /api/teams/{team_id}/schedules/{year}/{month}/confirm`
 - `PATCH /api/teams/{team_id}/schedules/{year}/{month}/assignments`
 - `GET /api/teams/{team_id}/schedules/{year}/{month}/validation`
+- `GET /api/teams/{team_id}/schedules/{year}/{month}/export.xlsx`
 - `POST /api/teams/{team_id}/availability`
 
 ## Phase 2 챗봇 동작
@@ -151,6 +162,15 @@ npm run build
 - 날짜를 클릭하면 우측 상세 패널에서 해당 날짜의 모든 직원 배정을 확인하고 근무유형, 휴무, 연차, 기타 상태로 수정할 수 있습니다.
 - 수정은 활성 `DRAFT` 스케줄 버전에 저장되며, 저장 직후 필요 인원 최소·최대·목표값과 누락 배정을 다시 검증합니다.
 - `CONFIRMED` 상태의 스케줄 버전은 API에서 수정을 거부합니다.
+
+## Phase 5 버전·확정·Excel 동작
+
+- 스케줄 버전 상태는 `DRAFT`, `CONFIRMED`, `ARCHIVED`를 사용합니다.
+- 확정 전 검증을 다시 실행하며 `ERROR` 이슈가 있으면 확정을 차단합니다.
+- `WARN` 이슈는 UI에서 확인 후 `approve_soft_issues`로 확정할 수 있습니다.
+- 확정된 버전은 직접 수정할 수 없고, 이전 버전에서 새 `DRAFT`를 복제한 뒤 수정합니다.
+- Excel 내보내기는 활성 버전을 기준으로 월요일~일요일 7열 달력, 날짜별 전체 직원, 동적 근무유형 그룹, 인원 수, 색상 구분, 인쇄 설정을 포함합니다.
+- 추가 시트는 직원별 월간 근무현황, 근무유형별 배정 횟수, 야간/조기/주말/휴무 공정성 통계, 검증 결과입니다.
 
 ## Electron 전환 PoC
 

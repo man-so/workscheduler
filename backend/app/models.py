@@ -26,8 +26,9 @@ class LeaveStatus(StrEnum):
 
 class ScheduleVersionStatus(StrEnum):
     DRAFT = "DRAFT"
-    REVIEW = "REVIEW"
     CONFIRMED = "CONFIRMED"
+    ARCHIVED = "ARCHIVED"
+    REVIEW = "REVIEW"
     SUPERSEDED = "SUPERSEDED"
 
 

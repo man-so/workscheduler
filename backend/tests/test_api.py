@@ -1,7 +1,9 @@
 from collections.abc import Generator
+from io import BytesIO
 import time
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -286,3 +288,135 @@ def test_manual_calendar_edit_and_validation(monkeypatch) -> None:
     body = validation.json()
     assert body["ok"] is False
     assert any(issue["code"] == "COVERAGE_BELOW_MIN" for issue in body["issues"])
+
+
+def test_confirm_blocks_direct_edit_and_clone_creates_new_draft(monkeypatch) -> None:
+    from app import generation
+    from app import main
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
+    monkeypatch.setattr(generation, "run_agent", lambda agent_id, constraint_input, timeout_seconds, cancel_event=None: AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id]))
+
+    team = client.post("/api/teams", json={"name": "확정 테스트"}).json()
+    employee = client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-CONFIRM", "display_name": "확정 직원"}).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "CONFIRM-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00"},
+    ).json()
+    assert client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "월요일 주간", "shift_type_id": shift["id"], "days_of_week_json": "[\"MON\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    ).status_code == 201
+
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 11, "agent_id": "codex", "timeout_seconds": 5})
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+
+    confirmed = client.post(f"/api/teams/{team['id']}/schedules/2026/11/confirm", json={"approve_soft_issues": True})
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "CONFIRMED"
+
+    blocked = client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-02", "status": "OFF", "shift_type_id": None},
+    )
+    assert blocked.status_code == 409
+
+    cloned = client.post(f"/api/teams/{team['id']}/schedules/2026/11/versions/{confirmed.json()['id']}/clone")
+    assert cloned.status_code == 201
+    assert cloned.json()["status"] == "DRAFT"
+    assert cloned.json()["is_active"] is True
+
+    edited = client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-02", "status": "OFF", "shift_type_id": None},
+    )
+    assert edited.status_code == 200
+
+
+def test_confirm_blocks_hard_constraint_errors(monkeypatch) -> None:
+    from app import generation
+    from app import main
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
+    monkeypatch.setattr(generation, "run_agent", lambda agent_id, constraint_input, timeout_seconds, cancel_event=None: AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id]))
+
+    team = client.post("/api/teams", json={"name": "Hard 차단 테스트"}).json()
+    employee = client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-HARD", "display_name": "Hard 직원"}).json()
+    shift = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "HARD-DAY", "name": "주간", "category": "DAY", "start_time": "09:00:00", "end_time": "17:00:00"},
+    ).json()
+    client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "월요일 주간", "shift_type_id": shift["id"], "days_of_week_json": "[\"MON\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    )
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 11, "agent_id": "codex", "timeout_seconds": 5})
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+    client.patch(
+        f"/api/teams/{team['id']}/schedules/2026/11/assignments",
+        json={"employee_id": employee["id"], "local_date": "2026-11-02", "status": "OFF", "shift_type_id": None},
+    )
+    blocked = client.post(f"/api/teams/{team['id']}/schedules/2026/11/confirm", json={"approve_soft_issues": True})
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"][0]["code"] == "COVERAGE_BELOW_MIN"
+
+
+def test_excel_export_contains_calendar_summaries_and_all_employees(monkeypatch) -> None:
+    from app import generation
+    from app import main
+    from app.agent_runner import AgentResult
+
+    monkeypatch.setattr(generation, "SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(main, "submit_generation", lambda run_id, team_id, year, month, agent_id, timeout_seconds: generation.run_generation(run_id, team_id, year, month, agent_id, timeout_seconds))
+    monkeypatch.setattr(generation, "run_agent", lambda agent_id, constraint_input, timeout_seconds, cancel_event=None: AgentResult(payload=constraint_input, stdout="{}", stderr="", command=[agent_id]))
+
+    team = client.post("/api/teams", json={"name": "Excel 테스트"}).json()
+    employees = [
+        client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-X1", "display_name": "엑셀 하나"}).json(),
+        client.post(f"/api/teams/{team['id']}/employees", json={"employee_no": "EMP-X2", "display_name": "엑셀 둘"}).json(),
+    ]
+    special = client.post(
+        f"/api/teams/{team['id']}/shift-types",
+        json={"code": "SPECIAL", "name": "특수근무", "category": "SPECIAL", "start_time": "13:00:00", "end_time": "21:00:00", "color": "#FDE68A"},
+    ).json()
+    client.post(
+        f"/api/teams/{team['id']}/coverage-requirements",
+        json={"name": "월초월말 특수", "shift_type_id": special["id"], "days_of_week_json": "[\"MON\",\"THU\"]", "min_count": 1, "target_count": 1, "max_count": 1},
+    )
+    started = client.post(f"/api/teams/{team['id']}/schedules/generate", json={"year": 2026, "month": 12, "agent_id": "codex", "timeout_seconds": 5})
+    run_id = started.json()["id"]
+    for _ in range(50):
+        current = client.get(f"/api/teams/{team['id']}/generation-runs/{run_id}").json()
+        if current["status"] in {"SUCCEEDED", "FAILED", "INFEASIBLE", "CANCELED"}:
+            break
+        time.sleep(0.02)
+    assert current["status"] == "SUCCEEDED", current
+
+    response = client.get(f"/api/teams/{team['id']}/schedules/2026/12/export.xlsx")
+    assert response.status_code == 200
+    workbook = load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames == ["월간 달력", "직원별 현황", "근무유형 통계", "공정성 통계", "검증 결과"]
+    calendar_text = "\n".join(str(cell.value or "") for row in workbook["월간 달력"].iter_rows() for cell in row)
+    employee_text = "\n".join(str(cell.value or "") for row in workbook["직원별 현황"].iter_rows() for cell in row)
+    stats_text = "\n".join(str(cell.value or "") for row in workbook["근무유형 통계"].iter_rows() for cell in row)
+    for employee in employees:
+        assert employee["display_name"] in calendar_text
+        assert employee["display_name"] in employee_text
+    assert "31일" in calendar_text
+    assert "특수근무" in stats_text

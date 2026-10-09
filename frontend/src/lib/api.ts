@@ -162,6 +162,19 @@ export type ScheduleValidation = {
   issues: ScheduleValidationIssue[];
 };
 
+export type ScheduleVersion = {
+  id: number;
+  schedule_id: number;
+  version_no: number;
+  status: string;
+  solver_status: string | null;
+  generated_at: string | null;
+  confirmed_at: string | null;
+  modified_at: string | null;
+  notes: string | null;
+  is_active: boolean;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -281,4 +294,24 @@ export function updateScheduleAssignment(
 
 export function validateMonthlySchedule(teamId: number, year: number, month: number): Promise<ScheduleValidation> {
   return request<ScheduleValidation>(`/api/teams/${teamId}/schedules/${year}/${month}/validation`);
+}
+
+export function listScheduleVersions(teamId: number, year: number, month: number): Promise<ScheduleVersion[]> {
+  return request<ScheduleVersion[]>(`/api/teams/${teamId}/schedules/${year}/${month}/versions`);
+}
+
+export function getScheduleVersion(teamId: number, year: number, month: number, versionId: number): Promise<MonthlySchedule> {
+  return request<MonthlySchedule>(`/api/teams/${teamId}/schedules/${year}/${month}/versions/${versionId}`);
+}
+
+export function cloneScheduleVersion(teamId: number, year: number, month: number, versionId: number): Promise<ScheduleVersion> {
+  return post<ScheduleVersion>(`/api/teams/${teamId}/schedules/${year}/${month}/versions/${versionId}/clone`, {});
+}
+
+export function confirmMonthlySchedule(teamId: number, year: number, month: number, approveSoftIssues: boolean): Promise<ScheduleVersion> {
+  return post<ScheduleVersion>(`/api/teams/${teamId}/schedules/${year}/${month}/confirm`, { approve_soft_issues: approveSoftIssues });
+}
+
+export function getScheduleExportUrl(teamId: number, year: number, month: number): string {
+  return `${API_BASE_URL}/api/teams/${teamId}/schedules/${year}/${month}/export.xlsx`;
 }

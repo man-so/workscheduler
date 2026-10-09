@@ -234,6 +234,23 @@ class ScheduleValidationRead(BaseModel):
     issues: list[ScheduleValidationIssue]
 
 
+class ScheduleVersionRead(BaseModel):
+    id: int
+    schedule_id: int
+    version_no: int
+    status: str
+    solver_status: str | None = None
+    generated_at: Any = None
+    confirmed_at: Any = None
+    modified_at: Any = None
+    notes: str | None = None
+    is_active: bool = False
+
+
+class ConfirmScheduleRequest(BaseModel):
+    approve_soft_issues: bool = False
+
+
 class SetupQuestion(BaseModel):
     id: str
     label: str
